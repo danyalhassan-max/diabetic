@@ -1,0 +1,39 @@
+# Python environments and caches
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Notebook and test/tool caches
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local environment and OS files
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+
+# Local datasets and generated image collections
+/DR_grading/
+/train_images/
+/aug_images/
+/ddr-equal/
+/working/
+/DR_grading.csv
+/train.csv
+/aug.csv
+
+# Superseded model artifacts and downloaded backbone weights.
+# Keep retfound_model.keras: app.py loads it at runtime.
+/model/
+/densenet.keras
+/model.h5
+/retfound_model_89_run.keras
