@@ -30,6 +30,9 @@ Thumbs.db
 /DR_grading.csv
 /train.csv
 /aug.csv
+/run_89_accuracy_version.ipynb
+/main.py
+/main1.ipynb
 
 # Superseded model artifacts and downloaded backbone weights.
 # Keep retfound_model.keras: app.py loads it at runtime.
