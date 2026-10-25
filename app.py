@@ -28,6 +28,23 @@ from gemini_validator import (
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(PROJECT_DIR / ".env")
+except ImportError:
+    env_file = PROJECT_DIR / ".env"
+    if env_file.is_file():
+        with open(env_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip().strip("'\"")
+                    if k and k not in os.environ:
+                        os.environ[k] = v
+
 MODEL_PATH = Path(
     os.environ.get("RETINA_MODEL_PATH", PROJECT_DIR / "retfound_model.keras")
 )

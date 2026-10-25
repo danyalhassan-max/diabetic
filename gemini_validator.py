@@ -15,11 +15,30 @@ import io
 import logging
 import os
 from enum import Enum
+from pathlib import Path
 from typing import Optional, Tuple
 
 import httpx
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel, Field
+
+PROJECT_DIR = Path(__file__).resolve().parent
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(PROJECT_DIR / ".env")
+except ImportError:
+    env_file = PROJECT_DIR / ".env"
+    if env_file.is_file():
+        with open(env_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip().strip("'\"")
+                    if k and k not in os.environ:
+                        os.environ[k] = v
 
 # Prevent PIL decompression bombs on large image files
 Image.MAX_IMAGE_PIXELS = 64_000_000
