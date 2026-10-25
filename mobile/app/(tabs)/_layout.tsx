@@ -4,10 +4,13 @@ import { Eye, Clock, UserCheck, Settings } from 'lucide-react-native';
 
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
+import { useAuth } from '@/context/AuthContext';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
+  const { profile } = useAuth();
+  const isDoctor = profile?.role === 'clinician';
 
   return (
     <Tabs
@@ -57,8 +60,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="clinicians"
         options={{
-          title: 'Clinician Access',
-          tabBarLabel: 'Clinicians',
+          title: isDoctor ? 'Patient Consultations' : 'Clinician Access',
+          tabBarLabel: isDoctor ? 'Consultations' : 'Clinicians',
           tabBarIcon: ({ color, size }) => <UserCheck size={size || 22} color={color} />,
         }}
       />

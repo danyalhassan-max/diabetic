@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   StyleSheet,
   View,
@@ -6,12 +6,15 @@ import {
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Keyboard,
+  type TextInputInstance,
+  type ScrollViewInstance,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Eye, EyeOff, Lock, Mail, ShieldAlert } from 'lucide-react-native';
 
 import Colors from '@/constants/Colors';
@@ -20,6 +23,7 @@ import { useAuth } from '@/context/AuthContext';
 
 export default function LoginScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const { signIn } = useAuth();
@@ -30,22 +34,32 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const emailInputRef = useRef<TextInputInstance>(null);
+  const passwordInputRef = useRef<TextInputInstance>(null);
+  const scrollViewRef = useRef<ScrollViewInstance>(null);
+
   const validate = () => {
     if (!email.trim()) {
       setErrorMessage('Please enter your email address.');
+      scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+      emailInputRef.current?.focus();
       return false;
     }
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email.trim())) {
       setErrorMessage('Please enter a valid email address.');
+      scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+      emailInputRef.current?.focus();
       return false;
     }
     if (!password) {
       setErrorMessage('Please enter your password.');
+      passwordInputRef.current?.focus();
       return false;
     }
     if (password.length < 6) {
       setErrorMessage('Password must be at least 6 characters.');
+      passwordInputRef.current?.focus();
       return false;
     }
     setErrorMessage(null);
@@ -53,6 +67,7 @@ export default function LoginScreen() {
   };
 
   const handleLogin = async () => {
+    Keyboard.dismiss();
     if (!validate()) return;
 
     setLoading(true);
@@ -71,8 +86,8 @@ export default function LoginScreen() {
       } else {
         setErrorMessage(msg);
       }
+      scrollViewRef.current?.scrollTo({ y: 0, animated: true });
     } else {
-      // AuthProvider session listener will trigger RootLayout redirect to /(tabs)
       router.replace('/(tabs)');
     }
   };
@@ -82,7 +97,19 @@ export default function LoginScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       style={[styles.container, { backgroundColor: theme.background }]}
     >
-      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        ref={scrollViewRef}
+        contentContainerStyle={[
+          styles.scrollContent,
+          {
+            paddingTop: Math.max(insets.top + 16, 24),
+            paddingBottom: Math.max(insets.bottom + 32, 48),
+          },
+        ]}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        showsVerticalScrollIndicator={false}
+      >
         {/* Header Branding */}
         <View style={styles.headerBox}>
           <View style={[styles.logoBadge, { backgroundColor: '#E0F2FE' }]}>
@@ -109,17 +136,23 @@ export default function LoginScreen() {
           <View style={[styles.inputRow, { borderColor: theme.border, backgroundColor: theme.background }]}>
             <Mail size={18} color={theme.textMuted} style={styles.inputIcon} />
             <TextInput
+              ref={emailInputRef}
               style={[styles.input, { color: theme.text }]}
               placeholder="patient@example.com"
               placeholderTextColor={theme.textMuted}
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
+              textContentType="emailAddress"
+              autoComplete="email"
+              returnKeyType="next"
               value={email}
               onChangeText={(text) => {
                 setEmail(text);
                 if (errorMessage) setErrorMessage(null);
               }}
+              onSubmitEditing={() => passwordInputRef.current?.focus()}
+              blurOnSubmit={false}
             />
           </View>
 
@@ -128,21 +161,29 @@ export default function LoginScreen() {
           <View style={[styles.inputRow, { borderColor: theme.border, backgroundColor: theme.background }]}>
             <Lock size={18} color={theme.textMuted} style={styles.inputIcon} />
             <TextInput
+              ref={passwordInputRef}
               style={[styles.input, { color: theme.text }]}
               placeholder="••••••••"
               placeholderTextColor={theme.textMuted}
               secureTextEntry={!showPassword}
               autoCapitalize="none"
+              autoCorrect={false}
+              textContentType="password"
+              autoComplete="current-password"
+              returnKeyType="done"
               value={password}
               onChangeText={(text) => {
                 setPassword(text);
                 if (errorMessage) setErrorMessage(null);
               }}
+              onSubmitEditing={handleLogin}
             />
             <TouchableOpacity
               style={styles.eyeBtn}
               onPress={() => setShowPassword((prev) => !prev)}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+              accessibilityRole="button"
             >
               {showPassword ? (
                 <EyeOff size={18} color={theme.textMuted} />
@@ -157,6 +198,8 @@ export default function LoginScreen() {
             style={[styles.primaryBtn, { backgroundColor: theme.primary }]}
             onPress={handleLogin}
             disabled={loading}
+            accessibilityRole="button"
+            accessibilityLabel="Sign In"
           >
             {loading ? (
               <ActivityIndicator color="#FFFFFF" size="small" />
@@ -171,7 +214,11 @@ export default function LoginScreen() {
           <Text style={[styles.footerText, { color: theme.textMuted }]}>
             Don't have an account?{' '}
           </Text>
-          <TouchableOpacity onPress={() => router.push('/(auth)/register')}>
+          <TouchableOpacity
+            onPress={() => router.push('/(auth)/register')}
+            accessibilityRole="button"
+            accessibilityLabel="Create Account"
+          >
             <Text style={[styles.footerLink, { color: theme.primary }]}>Create Account</Text>
           </TouchableOpacity>
         </View>
@@ -186,18 +233,18 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    padding: 24,
+    paddingHorizontal: 24,
     justifyContent: 'center',
   },
   headerBox: {
-    marginBottom: 24,
+    marginBottom: 20,
   },
   logoBadge: {
     alignSelf: 'flex-start',
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 20,
-    marginBottom: 12,
+    marginBottom: 10,
   },
   badgeText: {
     fontFamily: 'PlusJakartaSans_700Bold',
@@ -207,12 +254,12 @@ const styles = StyleSheet.create({
   title: {
     fontFamily: 'PlusJakartaSans_700Bold',
     fontSize: 26,
-    marginBottom: 8,
+    marginBottom: 6,
   },
   subtitle: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 14,
-    lineHeight: 21,
+    fontSize: 13,
+    lineHeight: 20,
   },
   errorBanner: {
     flexDirection: 'row',
@@ -264,10 +311,15 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   eyeBtn: {
-    padding: 4,
+    padding: 8,
+    minWidth: 40,
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   primaryBtn: {
     paddingVertical: 14,
+    minHeight: 48,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
@@ -282,6 +334,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
+    paddingVertical: 8,
   },
   footerText: {
     fontFamily: 'PlusJakartaSans_400Regular',

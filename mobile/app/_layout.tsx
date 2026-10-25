@@ -18,6 +18,8 @@ import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { useRouter, useSegments } from 'expo-router';
 import { ActivityIndicator, View } from 'react-native';
 
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+
 export { ErrorBoundary } from 'expo-router';
 
 export const unstable_settings = {
@@ -49,9 +51,11 @@ export default function RootLayout() {
   }
 
   return (
-    <AuthProvider>
-      <RootLayoutNav />
-    </AuthProvider>
+    <SafeAreaProvider>
+      <AuthProvider>
+        <RootLayoutNav />
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }
 

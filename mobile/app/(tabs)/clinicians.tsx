@@ -9,8 +9,27 @@ import {
   Linking,
   ActivityIndicator,
   RefreshControl,
+  TextInput,
+  Modal,
 } from 'react-native';
-import { ShieldCheck, UserPlus, KeyRound, ExternalLink, Trash2, Clock, AlertTriangle, RefreshCw, CheckCircle2 } from 'lucide-react-native';
+import {
+  ShieldCheck,
+  UserPlus,
+  KeyRound,
+  ExternalLink,
+  Trash2,
+  Clock,
+  AlertTriangle,
+  RefreshCw,
+  CheckCircle2,
+  BriefcaseMedical,
+  Eye,
+  FileText,
+  ShieldAlert,
+  X,
+  Check,
+  User,
+} from 'lucide-react-native';
 
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
@@ -25,6 +44,7 @@ interface ClinicianGrant {
   status: 'active' | 'revoked' | 'expired';
   expires_at: string;
   created_at: string;
+  patient_name?: string;
   clinician_profile?: {
     full_name: string;
     institution_name?: string | null;
@@ -32,17 +52,64 @@ interface ClinicianGrant {
   } | null;
 }
 
+interface PatientScanRecord {
+  id: string;
+  patient_id: string;
+  eye: 'OD' | 'OS' | 'OU';
+  grade: number;
+  label: string;
+  probabilities: Record<string, number>;
+  model_version: string;
+  patient_notes?: string | null;
+  created_at: string;
+  reviews?: Array<{
+    id: string;
+    confirmed_grade: number;
+    review_notes: string;
+    clinical_recommendation?: string | null;
+    created_at: string;
+  }>;
+}
+
+const DR_SEVERITY_LEVELS = [
+  '0: No Apparent Retinopathy',
+  '1: Mild Nonproliferative DR',
+  '2: Moderate Nonproliferative DR',
+  '3: Severe Nonproliferative DR',
+  '4: Proliferative DR',
+];
+
 export default function CliniciansScreen() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
+  const isDoctor = profile?.role === 'clinician';
 
+  // Common & Patient States
   const [grants, setGrants] = useState<ClinicianGrant[]>([]);
   const [activeCode, setActiveCode] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Doctor States
+  const [redeemCode, setRedeemCode] = useState('');
+  const [redeeming, setRedeeming] = useState(false);
+
+  // Scans Inspection Modal
+  const [inspectModalVisible, setInspectModalVisible] = useState(false);
+  const [selectedGrant, setSelectedGrant] = useState<ClinicianGrant | null>(null);
+  const [patientScans, setPatientScans] = useState<PatientScanRecord[]>([]);
+  const [loadingScans, setLoadingScans] = useState(false);
+
+  // Second Opinion Review Modal
+  const [reviewModalVisible, setReviewModalVisible] = useState(false);
+  const [selectedScan, setSelectedScan] = useState<PatientScanRecord | null>(null);
+  const [confirmedGrade, setConfirmedGrade] = useState<number>(0);
+  const [reviewNotes, setReviewNotes] = useState('');
+  const [recommendation, setRecommendation] = useState('');
+  const [submittingReview, setSubmittingReview] = useState(false);
 
   const fetchGrants = useCallback(async (isRefresh = false) => {
     if (!user?.id) {
@@ -56,44 +123,76 @@ export default function CliniciansScreen() {
     setErrorMessage(null);
 
     try {
-      // 1. Fetch active grants for this patient
-      const { data, error } = await supabase
-        .from('clinician_access_grants')
-        .select('*')
-        .eq('patient_id', user.id)
-        .eq('status', 'active')
-        .order('created_at', { ascending: false });
+      if (isDoctor) {
+        // Fetch consultations claimed by this clinician
+        const { data, error } = await supabase
+          .from('clinician_access_grants')
+          .select('*')
+          .eq('clinician_id', user.id)
+          .eq('status', 'active')
+          .order('created_at', { ascending: false });
 
-      if (error) {
-        setErrorMessage(error.message);
-      } else if (data) {
-        // Find most recent active grant code
-        const activeUnclaimed = data.find((g: any) => g.grant_code && new Date(g.expires_at) > new Date());
-        setActiveCode(activeUnclaimed ? activeUnclaimed.grant_code : null);
-
-        // Fetch clinician profiles for grants that have clinician_id
-        const grantsWithProfiles: ClinicianGrant[] = await Promise.all(
-          data.map(async (grant: any) => {
-            if (grant.clinician_id) {
-              const { data: prof } = await supabase
+        if (error) {
+          setErrorMessage(error.message);
+        } else if (data) {
+          // Fetch patient profile info if available
+          const grantsWithPatients: ClinicianGrant[] = await Promise.all(
+            data.map(async (grant: any) => {
+              const { data: patientProfile } = await supabase
                 .from('profiles')
-                .select('full_name, institution_name, medical_license_no')
-                .eq('id', grant.clinician_id)
+                .select('full_name')
+                .eq('id', grant.patient_id)
                 .maybeSingle();
-              return { ...grant, clinician_profile: prof };
-            }
-            return grant;
-          })
-        );
-        setGrants(grantsWithProfiles);
+              return {
+                ...grant,
+                patient_name:
+                  patientProfile?.full_name ||
+                  `Patient DRC-${grant.patient_id.slice(0, 8).toUpperCase()}`,
+              };
+            })
+          );
+          setGrants(grantsWithPatients);
+        }
+      } else {
+        // Patient view: fetch active grants generated by this patient
+        const { data, error } = await supabase
+          .from('clinician_access_grants')
+          .select('*')
+          .eq('patient_id', user.id)
+          .eq('status', 'active')
+          .order('created_at', { ascending: false });
+
+        if (error) {
+          setErrorMessage(error.message);
+        } else if (data) {
+          const activeUnclaimed = data.find(
+            (g: any) => g.grant_code && new Date(g.expires_at) > new Date()
+          );
+          setActiveCode(activeUnclaimed ? activeUnclaimed.grant_code : null);
+
+          const grantsWithProfiles: ClinicianGrant[] = await Promise.all(
+            data.map(async (grant: any) => {
+              if (grant.clinician_id) {
+                const { data: prof } = await supabase
+                  .from('profiles')
+                  .select('full_name, institution_name, medical_license_no')
+                  .eq('id', grant.clinician_id)
+                  .maybeSingle();
+                return { ...grant, clinician_profile: prof };
+              }
+              return grant;
+            })
+          );
+          setGrants(grantsWithProfiles);
+        }
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Unable to load clinician permissions.');
+      setErrorMessage(err.message || 'Unable to load clinical records.');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [user?.id]);
+  }, [user?.id, isDoctor]);
 
   useEffect(() => {
     fetchGrants();
@@ -104,6 +203,141 @@ export default function CliniciansScreen() {
     fetchGrants(true);
   };
 
+  // --- Doctor: Redeem Patient Code ---
+  const handleRedeemCode = async () => {
+    const code = redeemCode.trim();
+    if (!code) {
+      Alert.alert('Required', 'Please enter a patient access delegation code (e.g. 123-456).');
+      return;
+    }
+
+    setRedeeming(true);
+    try {
+      // 1. Try secure RPC function
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('redeem_clinician_grant', {
+        p_grant_code: code,
+      });
+
+      if (!rpcErr && rpcData?.success) {
+        Alert.alert('Access Granted', 'You now have authorized clinical access to this patient’s retinal scans.');
+        setRedeemCode('');
+        fetchGrants();
+        return;
+      }
+
+      // 2. Fallback: Direct table update if RPC not yet run in remote instance
+      const { data: updateData, error: updateErr } = await supabase
+        .from('clinician_access_grants')
+        .update({ clinician_id: user?.id, grant_code: null })
+        .eq('grant_code', code)
+        .eq('status', 'active')
+        .is('clinician_id', null)
+        .select()
+        .single();
+
+      if (updateErr) {
+        Alert.alert('Redemption Failed', updateErr.message || 'Access code is invalid, expired, or already claimed.');
+      } else {
+        Alert.alert('Access Granted', 'You now have authorized clinical access to this patient’s retinal scans.');
+        setRedeemCode('');
+        fetchGrants();
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'Could not redeem code. Please try again.');
+    } finally {
+      setRedeeming(false);
+    }
+  };
+
+  // --- Doctor: Open Patient Scans ---
+  const handleInspectPatientScans = async (grant: ClinicianGrant) => {
+    setSelectedGrant(grant);
+    setInspectModalVisible(true);
+    setLoadingScans(true);
+
+    try {
+      // Fetch scans for this authorized patient
+      const { data: scans, error } = await supabase
+        .from('scans')
+        .select('*')
+        .eq('patient_id', grant.patient_id)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        Alert.alert('Query Error', error.message);
+        setPatientScans([]);
+      } else if (scans) {
+        // Fetch any existing reviews for each scan
+        const scansWithReviews = await Promise.all(
+          scans.map(async (s: any) => {
+            const { data: reviews } = await supabase
+              .from('clinician_reviews')
+              .select('*')
+              .eq('scan_id', s.id);
+            return { ...s, reviews: reviews || [] };
+          })
+        );
+        setPatientScans(scansWithReviews);
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'Could not load patient scans.');
+    } finally {
+      setLoadingScans(false);
+    }
+  };
+
+  // --- Doctor: Open Review Modal ---
+  const handleOpenReviewModal = (scan: PatientScanRecord) => {
+    if (!profile?.is_verified) {
+      Alert.alert(
+        'Verification Required',
+        'Your clinician account is currently in Pending Verification status. You cannot record official second opinions until your medical credentials have been approved by system administration.'
+      );
+      return;
+    }
+    setSelectedScan(scan);
+    setConfirmedGrade(scan.grade);
+    setReviewNotes('');
+    setRecommendation('');
+    setReviewModalVisible(true);
+  };
+
+  // --- Doctor: Submit Clinical Second Opinion ---
+  const handleSubmitReview = async () => {
+    if (!selectedScan || !user?.id) return;
+    if (!reviewNotes.trim()) {
+      Alert.alert('Required Field', 'Please provide clinical evaluation notes for this review.');
+      return;
+    }
+
+    setSubmittingReview(true);
+    try {
+      const { error } = await supabase.from('clinician_reviews').insert({
+        scan_id: selectedScan.id,
+        clinician_id: user.id,
+        confirmed_grade: confirmedGrade,
+        review_notes: reviewNotes.trim(),
+        clinical_recommendation: recommendation.trim() || null,
+      });
+
+      if (error) {
+        Alert.alert('Submission Failed', error.message);
+      } else {
+        Alert.alert('Review Recorded', 'Your clinical second opinion has been saved to the patient record.');
+        setReviewModalVisible(false);
+        // Refresh scans modal
+        if (selectedGrant) {
+          handleInspectPatientScans(selectedGrant);
+        }
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err.message || 'Failed to submit review.');
+    } finally {
+      setSubmittingReview(false);
+    }
+  };
+
+  // --- Patient: Generate Code ---
   const generateNewGrantCode = async () => {
     if (!user?.id) {
       Alert.alert('Authentication Required', 'Please sign in to generate clinician access codes.');
@@ -127,11 +361,10 @@ export default function CliniciansScreen() {
         .single();
 
       if (error) {
-        // If table not yet applied in remote Supabase, fall back to local presentation with informative notice
         setActiveCode(randomCode);
         Alert.alert(
           'Access Code Generated (Local)',
-          `Code ${randomCode} generated. Note: Supabase grants table returned: ${error.message}`
+          `Code ${randomCode} generated. Note: Database returned: ${error.message}`
         );
       } else {
         setActiveCode(randomCode);
@@ -151,6 +384,7 @@ export default function CliniciansScreen() {
     }
   };
 
+  // --- Patient: Revoke Access ---
   const handleRevoke = (id: string, clinicianName?: string) => {
     const targetName = clinicianName || 'this practitioner';
     Alert.alert(
@@ -182,7 +416,7 @@ export default function CliniciansScreen() {
   };
 
   const handleBookExternal = (clinicName: string, url: string) => {
-    Alert.alert('External Clinic Referral', `Opening external scheduling website for ${clinicName}.`, [
+    Alert.alert('External Clinic Referral', `Opening scheduling website for ${clinicName}.`, [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Open Browser', onPress: () => Linking.openURL(url) },
     ]);
@@ -202,148 +436,493 @@ export default function CliniciansScreen() {
       style={[styles.container, { backgroundColor: theme.background }]}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.primary} />}
     >
-      {/* Clinician Access Delegation Card */}
-      <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.cardBorder }]}>
-        <View style={styles.cardHeaderRow}>
-          <ShieldCheck size={22} color={theme.primary} />
-          <Text style={[styles.cardTitle, { color: theme.text }]}>Patient-Authorized Access</Text>
-        </View>
-        <Text style={[styles.cardSubtitle, { color: theme.textMuted }]}>
-          Your medical scans are private. Doctors can only view your scans when you explicitly grant them permission.
-        </Text>
+      {/* ========================================================================= */}
+      {/* DOCTOR VIEW                                                               */}
+      {/* ========================================================================= */}
+      {isDoctor ? (
+        <>
+          {/* Clinician Status Card */}
+          <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.cardBorder }]}>
+            <View style={styles.cardHeaderRow}>
+              <BriefcaseMedical size={22} color={theme.primary} />
+              <Text style={[styles.cardTitle, { color: theme.text }]}>Clinician Consultation Portal</Text>
+            </View>
+            <Text style={[styles.cardSubtitle, { color: theme.textMuted }]}>
+              Review patient fundus images authorized via one-time delegation codes, inspect AI predictions, and document clinical second opinions.
+            </Text>
 
-        <View style={[styles.codeBox, { backgroundColor: theme.surfaceSubtle, borderColor: theme.border }]}>
-          <KeyRound size={20} color={theme.primary} />
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.codeLabel, { color: theme.textMuted }]}>One-Time Clinician Authorization Code</Text>
-            <Text style={[styles.codeValue, { color: theme.primary }]}>{activeCode || 'No Active Code'}</Text>
-          </View>
-          <TouchableOpacity
-            style={[styles.newCodeBtn, { backgroundColor: theme.primary }]}
-            onPress={generateNewGrantCode}
-            disabled={generating}
-            accessibilityLabel="Generate new authorization code"
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            {generating ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <Text style={styles.newCodeBtnText}>Generate</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* Loading State */}
-      {loading && !refreshing && (
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color={theme.primary} />
-          <Text style={[styles.stateText, { color: theme.textMuted }]}>Checking clinician authorizations...</Text>
-        </View>
-      )}
-
-      {/* Error State with Retry */}
-      {!loading && errorMessage && (
-        <View style={[styles.errorCard, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]}>
-          <AlertTriangle size={20} color="#DC2626" />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.errorTitle}>Could not load clinician grants</Text>
-            <Text style={styles.errorSub}>{errorMessage}</Text>
-          </View>
-          <TouchableOpacity style={styles.retryBtn} onPress={() => fetchGrants()}>
-            <RefreshCw size={14} color="#FFFFFF" />
-            <Text style={styles.retryBtnText}>Retry</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
-      {/* Authorized Doctors & Active Access Grants */}
-      <Text style={[styles.sectionHeading, { color: theme.text }]}>Authorized Access Grants</Text>
-      {!loading && grants.length === 0 ? (
-        <View style={[styles.emptyBox, { borderColor: theme.border }]}>
-          <Clock size={28} color={theme.textMuted} style={{ marginBottom: 8 }} />
-          <Text style={[styles.emptyTitle, { color: theme.text }]}>No Doctors Currently Authorized</Text>
-          <Text style={[styles.emptyText, { color: theme.textMuted }]}>
-            Generate a one-time code above to authorize an ophthalmologist or clinical eye specialist to review your retinal scans.
-          </Text>
-        </View>
-      ) : (
-        !loading &&
-        grants.map((grant) => {
-          const clinicianName = grant.clinician_profile?.full_name || (grant.grant_code ? `Pending Code: ${grant.grant_code}` : 'Authorized Practitioner');
-          const institution = grant.clinician_profile?.institution_name || (grant.grant_code ? 'Awaiting Doctor Redemptions' : 'Certified Ophthalmic Clinic');
-          const license = grant.clinician_profile?.medical_license_no ? `License: ${grant.clinician_profile.medical_license_no}` : 'Read-Only Access Granted';
-
-          return (
+            {/* Verification Status Banner */}
             <View
-              key={grant.id}
-              style={[styles.clinicianCard, { backgroundColor: theme.surface, borderColor: theme.cardBorder }]}
+              style={[
+                styles.doctorNoticeBanner,
+                {
+                  backgroundColor: profile?.is_verified ? '#F0FDF4' : '#FFFBEB',
+                  borderColor: profile?.is_verified ? '#BBF7D0' : '#FDE68A',
+                },
+              ]}
             >
-              <View style={styles.clinicianInfo}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                  <Text style={[styles.clinicianName, { color: theme.text }]} numberOfLines={1} ellipsizeMode="tail">
-                    {clinicianName}
-                  </Text>
-                  {grant.clinician_profile && (
-                    <CheckCircle2 size={14} color={theme.primary} />
-                  )}
-                </View>
-                <Text style={[styles.clinicianRole, { color: theme.textMuted }]}>{institution}</Text>
-                <Text style={[styles.clinicianClinic, { color: theme.primary }]}>{license}</Text>
-                <Text style={[styles.grantedDate, { color: theme.textMuted }]}>
-                  Granted on {formatDate(grant.created_at)} • Valid until {formatDate(grant.expires_at)}
+              {profile?.is_verified ? (
+                <CheckCircle2 size={18} color="#15803D" style={{ marginTop: 2 }} />
+              ) : (
+                <Clock size={18} color="#D97706" style={{ marginTop: 2 }} />
+              )}
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={[
+                    styles.doctorNoticeTitle,
+                    { color: profile?.is_verified ? '#15803D' : '#92400E' },
+                  ]}
+                >
+                  {profile?.is_verified ? 'Verified Clinical License' : 'Pending Administrative Verification'}
+                </Text>
+                <Text
+                  style={[
+                    styles.doctorNoticeText,
+                    { color: profile?.is_verified ? '#166534' : '#B45309' },
+                  ]}
+                >
+                  {profile?.is_verified
+                    ? 'Your credentials are active. You have full access to redeem patient codes and record clinical second opinions.'
+                    : 'Your medical credentials are in the verification queue. You can redeem patient codes and inspect scans in read-only mode, but second opinion submission is locked.'}
                 </Text>
               </View>
+            </View>
+          </View>
 
+          {/* Redeem Patient Code Card */}
+          <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.cardBorder }]}>
+            <View style={styles.cardHeaderRow}>
+              <KeyRound size={20} color={theme.primary} />
+              <Text style={[styles.cardTitle, { color: theme.text }]}>Redeem Patient Access Code</Text>
+            </View>
+            <Text style={[styles.cardSubtitle, { color: theme.textMuted }]}>
+              Enter the 6-digit delegation code generated by the patient to link to their retinal scans.
+            </Text>
+
+            <View style={styles.redeemRow}>
+              <TextInput
+                style={[
+                  styles.redeemInput,
+                  { color: theme.text, borderColor: theme.border, backgroundColor: theme.background },
+                ]}
+                placeholder="e.g. 123-456"
+                placeholderTextColor={theme.textMuted}
+                value={redeemCode}
+                onChangeText={setRedeemCode}
+                autoCapitalize="characters"
+                maxLength={10}
+              />
               <TouchableOpacity
-                style={styles.revokeBtn}
-                onPress={() => handleRevoke(grant.id, grant.clinician_profile?.full_name)}
-                accessibilityLabel="Revoke access"
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                style={[styles.redeemBtn, { backgroundColor: theme.primary }]}
+                onPress={handleRedeemCode}
+                disabled={redeeming}
               >
-                <Trash2 size={16} color="#DC2626" />
-                <Text style={styles.revokeText}>Revoke</Text>
+                {redeeming ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.redeemBtnText}>Claim Access</Text>
+                )}
               </TouchableOpacity>
             </View>
-          );
-        })
+          </View>
+
+          {/* Authorized Consultations List */}
+          <Text style={[styles.sectionHeading, { color: theme.text }]}>Authorized Patient Consultations</Text>
+          {!loading && grants.length === 0 ? (
+            <View style={[styles.emptyBox, { borderColor: theme.border }]}>
+              <Clock size={28} color={theme.textMuted} style={{ marginBottom: 8 }} />
+              <Text style={[styles.emptyTitle, { color: theme.text }]}>No Active Patient Consultations</Text>
+              <Text style={[styles.emptyText, { color: theme.textMuted }]}>
+                Ask your patient to generate a 6-digit access code from their Clinician Access tab and redeem it above.
+              </Text>
+            </View>
+          ) : (
+            !loading &&
+            grants.map((grant) => (
+              <View
+                key={grant.id}
+                style={[styles.clinicianCard, { backgroundColor: theme.surface, borderColor: theme.cardBorder }]}
+              >
+                <View style={styles.clinicianInfo}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                    <Text style={[styles.clinicianName, { color: theme.text }]}>
+                      {grant.patient_name || `Patient DRC-${grant.patient_id.slice(0, 8).toUpperCase()}`}
+                    </Text>
+                    <CheckCircle2 size={14} color="#15803D" />
+                  </View>
+                  <Text style={[styles.clinicianRole, { color: theme.textMuted }]}>
+                    Active Grant • Valid until {formatDate(grant.expires_at)}
+                  </Text>
+                  <Text style={[styles.grantedDate, { color: theme.textMuted }]}>
+                    Delegated on {formatDate(grant.created_at)}
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  style={[styles.inspectBtn, { backgroundColor: theme.primary }]}
+                  onPress={() => handleInspectPatientScans(grant)}
+                >
+                  <Eye size={14} color="#FFFFFF" />
+                  <Text style={styles.inspectBtnText}>View Scans</Text>
+                </TouchableOpacity>
+              </View>
+            ))
+          )}
+        </>
+      ) : (
+        /* ========================================================================= */
+        /* PATIENT VIEW (PRESERVED)                                                 */
+        /* ========================================================================= */
+        <>
+          {/* Clinician Access Delegation Card */}
+          <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.cardBorder }]}>
+            <View style={styles.cardHeaderRow}>
+              <ShieldCheck size={22} color={theme.primary} />
+              <Text style={[styles.cardTitle, { color: theme.text }]}>Patient-Authorized Access</Text>
+            </View>
+            <Text style={[styles.cardSubtitle, { color: theme.textMuted }]}>
+              Your medical scans are private. Doctors can only view your scans when you explicitly grant them permission.
+            </Text>
+
+            <View style={[styles.codeBox, { backgroundColor: theme.surfaceSubtle, borderColor: theme.border }]}>
+              <KeyRound size={20} color={theme.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.codeLabel, { color: theme.textMuted }]}>One-Time Clinician Authorization Code</Text>
+                <Text style={[styles.codeValue, { color: theme.primary }]}>{activeCode || 'No Active Code'}</Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.newCodeBtn, { backgroundColor: theme.primary }]}
+                onPress={generateNewGrantCode}
+                disabled={generating}
+                accessibilityLabel="Generate new authorization code"
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                {generating ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.newCodeBtnText}>Generate</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Loading State */}
+          {loading && !refreshing && (
+            <View style={styles.centerContainer}>
+              <ActivityIndicator size="large" color={theme.primary} />
+              <Text style={[styles.stateText, { color: theme.textMuted }]}>Checking clinician authorizations...</Text>
+            </View>
+          )}
+
+          {/* Error State with Retry */}
+          {!loading && errorMessage && (
+            <View style={[styles.errorCard, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]}>
+              <AlertTriangle size={20} color="#DC2626" />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.errorTitle}>Could not load clinician grants</Text>
+                <Text style={styles.errorSub}>{errorMessage}</Text>
+              </View>
+              <TouchableOpacity style={styles.retryBtn} onPress={() => fetchGrants()}>
+                <RefreshCw size={14} color="#FFFFFF" />
+                <Text style={styles.retryBtnText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Authorized Doctors & Active Access Grants */}
+          <Text style={[styles.sectionHeading, { color: theme.text }]}>Authorized Access Grants</Text>
+          {!loading && grants.length === 0 ? (
+            <View style={[styles.emptyBox, { borderColor: theme.border }]}>
+              <Clock size={28} color={theme.textMuted} style={{ marginBottom: 8 }} />
+              <Text style={[styles.emptyTitle, { color: theme.text }]}>No Doctors Currently Authorized</Text>
+              <Text style={[styles.emptyText, { color: theme.textMuted }]}>
+                Generate a one-time code above to authorize an ophthalmologist or clinical eye specialist to review your retinal scans.
+              </Text>
+            </View>
+          ) : (
+            !loading &&
+            grants.map((grant) => {
+              const clinicianName =
+                grant.clinician_profile?.full_name ||
+                (grant.grant_code ? `Pending Code: ${grant.grant_code}` : 'Authorized Practitioner');
+              const institution =
+                grant.clinician_profile?.institution_name ||
+                (grant.grant_code ? 'Awaiting Doctor Redemption' : 'Certified Ophthalmic Clinic');
+              const license = grant.clinician_profile?.medical_license_no
+                ? `License: ${grant.clinician_profile.medical_license_no}`
+                : 'Read-Only Access Granted';
+
+              return (
+                <View
+                  key={grant.id}
+                  style={[styles.clinicianCard, { backgroundColor: theme.surface, borderColor: theme.cardBorder }]}
+                >
+                  <View style={styles.clinicianInfo}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                      <Text style={[styles.clinicianName, { color: theme.text }]} numberOfLines={1} ellipsizeMode="tail">
+                        {clinicianName}
+                      </Text>
+                      {grant.clinician_profile && <CheckCircle2 size={14} color={theme.primary} />}
+                    </View>
+                    <Text style={[styles.clinicianRole, { color: theme.textMuted }]}>{institution}</Text>
+                    <Text style={[styles.clinicianClinic, { color: theme.primary }]}>{license}</Text>
+                    <Text style={[styles.grantedDate, { color: theme.textMuted }]}>
+                      Granted on {formatDate(grant.created_at)} • Valid until {formatDate(grant.expires_at)}
+                    </Text>
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.revokeBtn}
+                    onPress={() => handleRevoke(grant.id, grant.clinician_profile?.full_name)}
+                    accessibilityLabel="Revoke access"
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Trash2 size={16} color="#DC2626" />
+                    <Text style={styles.revokeText}>Revoke</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })
+          )}
+
+          {/* Regional Eye Clinics Directory */}
+          <Text style={[styles.sectionHeading, { color: theme.text }]}>Regional Eye Clinics & Booking</Text>
+          <View style={[styles.clinicListingCard, { backgroundColor: theme.surface, borderColor: theme.cardBorder }]}>
+            <View style={styles.clinicItem}>
+              <View style={{ flex: 1, paddingRight: 8 }}>
+                <Text style={[styles.clinicItemName, { color: theme.text }]}>St. Jude Retinal Institute</Text>
+                <Text style={[styles.clinicItemSub, { color: theme.textMuted }]}>Specialized Diabetic Maculopathy & Laser Treatment</Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.bookBtn, { backgroundColor: theme.primary }]}
+                onPress={() => handleBookExternal('St. Jude Retinal Institute', 'https://example.com/stjude-booking')}
+                accessibilityLabel="Book visit with St. Jude Retinal Institute"
+              >
+                <ExternalLink size={14} color="#FFFFFF" />
+                <Text style={styles.bookBtnText}>Book Visit</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={[styles.divider, { backgroundColor: theme.border }]} />
+
+            <View style={styles.clinicItem}>
+              <View style={{ flex: 1, paddingRight: 8 }}>
+                <Text style={[styles.clinicItemName, { color: theme.text }]}>City Ophthalmic Diagnostic Center</Text>
+                <Text style={[styles.clinicItemSub, { color: theme.textMuted }]}>Fundus Fluorescein Angiography (FFA) & OCT Imaging</Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.bookBtn, { backgroundColor: theme.primary }]}
+                onPress={() => handleBookExternal('City Ophthalmic Diagnostic Center', 'https://example.com/cityeye-booking')}
+                accessibilityLabel="Book visit with City Ophthalmic Diagnostic Center"
+              >
+                <ExternalLink size={14} color="#FFFFFF" />
+                <Text style={styles.bookBtnText}>Book Visit</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </>
       )}
 
-      {/* External Ophthalmology Clinic Directory (Shared Directory Data) */}
-      <Text style={[styles.sectionHeading, { color: theme.text }]}>Regional Eye Clinics & Booking</Text>
-      <View style={[styles.clinicListingCard, { backgroundColor: theme.surface, borderColor: theme.cardBorder }]}>
-        <View style={styles.clinicItem}>
-          <View style={{ flex: 1, paddingRight: 8 }}>
-            <Text style={[styles.clinicItemName, { color: theme.text }]}>St. Jude Retinal Institute</Text>
-            <Text style={[styles.clinicItemSub, { color: theme.textMuted }]}>Specialized Diabetic Maculopathy & Laser Treatment</Text>
-          </View>
-          <TouchableOpacity
-            style={[styles.bookBtn, { backgroundColor: theme.primary }]}
-            onPress={() => handleBookExternal('St. Jude Retinal Institute', 'https://example.com/stjude-booking')}
-            accessibilityLabel="Book visit with St. Jude Retinal Institute"
-          >
-            <ExternalLink size={14} color="#FFFFFF" />
-            <Text style={styles.bookBtnText}>Book Visit</Text>
-          </TouchableOpacity>
-        </View>
+      {/* ========================================================================= */}
+      {/* DOCTOR: INSPECT PATIENT SCANS MODAL                                       */}
+      {/* ========================================================================= */}
+      <Modal visible={inspectModalVisible} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={[styles.inspectModalCard, { backgroundColor: theme.surface, borderColor: theme.cardBorder }]}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={[styles.modalTitle, { color: theme.text }]}>
+                  {selectedGrant?.patient_name || 'Patient Scans'}
+                </Text>
+                <Text style={[styles.modalSub, { color: theme.textMuted }]}>
+                  Authorized Retinal Image Longitudinal History
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setInspectModalVisible(false)}>
+                <X size={22} color={theme.textMuted} />
+              </TouchableOpacity>
+            </View>
 
-        <View style={[styles.divider, { backgroundColor: theme.border }]} />
+            {loadingScans ? (
+              <View style={{ padding: 40, alignItems: 'center' }}>
+                <ActivityIndicator size="large" color={theme.primary} />
+                <Text style={{ marginTop: 10, color: theme.textMuted }}>Loading authorized scans...</Text>
+              </View>
+            ) : patientScans.length === 0 ? (
+              <View style={{ padding: 30, alignItems: 'center' }}>
+                <Text style={{ color: theme.textMuted, textAlign: 'center' }}>
+                  This patient has not yet recorded any retinal scans.
+                </Text>
+              </View>
+            ) : (
+              <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+                {patientScans.map((scan) => (
+                  <View
+                    key={scan.id}
+                    style={[styles.scanItemCard, { borderColor: theme.border, backgroundColor: theme.background }]}
+                  >
+                    <View style={styles.scanItemHeader}>
+                      <View style={[styles.eyeBadge, { backgroundColor: theme.primary }]}>
+                        <Text style={styles.eyeBadgeText}>{scan.eye === 'OD' ? 'Right Eye (OD)' : 'Left Eye (OS)'}</Text>
+                      </View>
+                      <Text style={[styles.scanDate, { color: theme.textMuted }]}>{formatDate(scan.created_at)}</Text>
+                    </View>
 
-        <View style={styles.clinicItem}>
-          <View style={{ flex: 1, paddingRight: 8 }}>
-            <Text style={[styles.clinicItemName, { color: theme.text }]}>City Ophthalmic Diagnostic Center</Text>
-            <Text style={[styles.clinicItemSub, { color: theme.textMuted }]}>Fundus Fluorescein Angiography (FFA) & OCT Imaging</Text>
+                    <Text style={[styles.scanGradeText, { color: theme.text }]}>
+                      DenseNet-121 Diagnosis: Grade {scan.grade} ({scan.label})
+                    </Text>
+
+                    {/* Existing Reviews */}
+                    {scan.reviews && scan.reviews.length > 0 && (
+                      <View style={styles.existingReviewsBox}>
+                        <Text style={styles.existingReviewsTitle}>Doctor Second Opinions:</Text>
+                        {scan.reviews.map((rev) => (
+                          <View key={rev.id} style={styles.reviewItem}>
+                            <Text style={styles.reviewItemGrade}>
+                              Confirmed: Grade {rev.confirmed_grade} ({DR_SEVERITY_LEVELS[rev.confirmed_grade]})
+                            </Text>
+                            <Text style={styles.reviewItemNotes}>"{rev.review_notes}"</Text>
+                            {rev.clinical_recommendation ? (
+                              <Text style={styles.reviewItemRec}>Plan: {rev.clinical_recommendation}</Text>
+                            ) : null}
+                          </View>
+                        ))}
+                      </View>
+                    )}
+
+                    {/* Review Action Button */}
+                    <TouchableOpacity
+                      style={[
+                        styles.reviewActionBtn,
+                        {
+                          backgroundColor: profile?.is_verified ? theme.primary : '#E2E8F0',
+                        },
+                      ]}
+                      onPress={() => handleOpenReviewModal(scan)}
+                      disabled={!profile?.is_verified}
+                    >
+                      <FileText size={14} color={profile?.is_verified ? '#FFFFFF' : '#64748B'} />
+                      <Text
+                        style={[
+                          styles.reviewActionBtnText,
+                          { color: profile?.is_verified ? '#FFFFFF' : '#64748B' },
+                        ]}
+                      >
+                        {profile?.is_verified ? 'Record Clinical Second Opinion' : 'Review Locked (Unverified)'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
           </View>
-          <TouchableOpacity
-            style={[styles.bookBtn, { backgroundColor: theme.primary }]}
-            onPress={() => handleBookExternal('City Ophthalmic Diagnostic Center', 'https://example.com/cityeye-booking')}
-            accessibilityLabel="Book visit with City Ophthalmic Diagnostic Center"
-          >
-            <ExternalLink size={14} color="#FFFFFF" />
-            <Text style={styles.bookBtnText}>Book Visit</Text>
-          </TouchableOpacity>
         </View>
-      </View>
+      </Modal>
+
+      {/* ========================================================================= */}
+      {/* DOCTOR: SUBMIT CLINICAL SECOND OPINION MODAL                              */}
+      {/* ========================================================================= */}
+      <Modal visible={reviewModalVisible} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <ScrollView contentContainerStyle={styles.modalScrollContent} keyboardShouldPersistTaps="handled">
+            <View style={[styles.modalCard, { backgroundColor: theme.surface, borderColor: theme.cardBorder }]}>
+              <View style={styles.modalHeader}>
+                <View>
+                  <Text style={[styles.modalTitle, { color: theme.text }]}>Clinical Second Opinion</Text>
+                  <Text style={[styles.modalSub, { color: theme.textMuted }]}>
+                    {selectedScan?.eye === 'OD' ? 'Right Eye (OD)' : 'Left Eye (OS)'} • Model Pred: Grade {selectedScan?.grade}
+                  </Text>
+                </View>
+                <TouchableOpacity onPress={() => setReviewModalVisible(false)}>
+                  <X size={20} color={theme.textMuted} />
+                </TouchableOpacity>
+              </View>
+
+              {/* Confirmed Grade Selector */}
+              <Text style={[styles.inputLabel, { color: theme.text }]}>Confirmed Clinical Grade</Text>
+              <View style={{ gap: 6, marginBottom: 12 }}>
+                {DR_SEVERITY_LEVELS.map((level, idx) => {
+                  const isSelected = confirmedGrade === idx;
+                  return (
+                    <TouchableOpacity
+                      key={level}
+                      style={[
+                        styles.gradeOptionBtn,
+                        { borderColor: theme.border, backgroundColor: theme.background },
+                        isSelected && { borderColor: theme.primary, backgroundColor: '#E0F2FE' },
+                      ]}
+                      onPress={() => setConfirmedGrade(idx)}
+                    >
+                      <Text
+                        style={[
+                          styles.gradeOptionText,
+                          { color: isSelected ? theme.primary : theme.text },
+                          isSelected && { fontFamily: 'PlusJakartaSans_700Bold' },
+                        ]}
+                      >
+                        {level}
+                      </Text>
+                      {isSelected && <Check size={16} color={theme.primary} />}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Clinical Review Notes */}
+              <Text style={[styles.inputLabel, { color: theme.text }]}>Clinical Evaluation Notes *</Text>
+              <TextInput
+                style={[
+                  styles.textArea,
+                  { color: theme.text, borderColor: theme.border, backgroundColor: theme.background },
+                ]}
+                placeholder="Microaneurysms, hemorrhages, hard exudates observations..."
+                placeholderTextColor={theme.textMuted}
+                multiline
+                numberOfLines={3}
+                value={reviewNotes}
+                onChangeText={setReviewNotes}
+              />
+
+              {/* Recommendation */}
+              <Text style={[styles.inputLabel, { color: theme.text }]}>Patient Recommendation (Optional)</Text>
+              <TextInput
+                style={[
+                  styles.textArea,
+                  { color: theme.text, borderColor: theme.border, backgroundColor: theme.background },
+                ]}
+                placeholder="e.g. Schedule follow-up dilated exam in 3 months; refer for OCT."
+                placeholderTextColor={theme.textMuted}
+                multiline
+                numberOfLines={2}
+                value={recommendation}
+                onChangeText={setRecommendation}
+              />
+
+              {/* Buttons */}
+              <View style={styles.modalBtnRow}>
+                <TouchableOpacity
+                  style={[styles.modalCancelBtn, { borderColor: theme.border }]}
+                  onPress={() => setReviewModalVisible(false)}
+                >
+                  <Text style={[styles.modalCancelBtnText, { color: theme.textMuted }]}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.modalSaveBtn, { backgroundColor: theme.primary }]}
+                  onPress={handleSubmitReview}
+                  disabled={submittingReview}
+                >
+                  {submittingReview ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.modalSaveBtnText}>Sign & Save Review</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -380,6 +959,64 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     marginBottom: 16,
   },
+  doctorNoticeBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  doctorNoticeTitle: {
+    fontFamily: 'PlusJakartaSans_700Bold',
+    fontSize: 13,
+    marginBottom: 2,
+  },
+  doctorNoticeText: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  redeemRow: {
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'center',
+  },
+  redeemInput: {
+    flex: 1,
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontFamily: 'PlusJakartaSans_700Bold',
+    fontSize: 16,
+    letterSpacing: 1.5,
+  },
+  redeemBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  redeemBtnText: {
+    color: '#FFFFFF',
+    fontFamily: 'PlusJakartaSans_700Bold',
+    fontSize: 13,
+  },
+  inspectBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  inspectBtnText: {
+    color: '#FFFFFF',
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+  },
   codeBox: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -395,7 +1032,7 @@ const styles = StyleSheet.create({
   },
   codeValue: {
     fontFamily: 'PlusJakartaSans_700Bold',
-    fontSize: 20,
+    fontSize: 16,
     letterSpacing: 2,
   },
   newCodeBtn: {
@@ -421,26 +1058,38 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 20,
   },
+  emptyTitle: {
+    fontFamily: 'PlusJakartaSans_700Bold',
+    fontSize: 15,
+    marginBottom: 4,
+  },
   emptyText: {
     fontFamily: 'PlusJakartaSans_400Regular',
-    fontSize: 13,
+    fontSize: 12,
+    textAlign: 'center',
+    lineHeight: 18,
   },
   clinicianCard: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
     padding: 16,
     borderRadius: 14,
     borderWidth: 1,
     marginBottom: 12,
+    elevation: 1,
+    shadowColor: '#0F1E36',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
   },
   clinicianInfo: {
     flex: 1,
+    paddingRight: 10,
   },
   clinicianName: {
     fontFamily: 'PlusJakartaSans_700Bold',
     fontSize: 15,
-    marginBottom: 2,
   },
   clinicianRole: {
     fontFamily: 'PlusJakartaSans_500Medium',
@@ -462,8 +1111,8 @@ const styles = StyleSheet.create({
     gap: 4,
     paddingVertical: 6,
     paddingHorizontal: 10,
-    borderRadius: 6,
-    backgroundColor: '#FEF2F2',
+    borderRadius: 8,
+    backgroundColor: '#FEE2E2',
   },
   revokeText: {
     color: '#DC2626',
@@ -472,15 +1121,14 @@ const styles = StyleSheet.create({
   },
   clinicListingCard: {
     borderRadius: 14,
-    padding: 16,
     borderWidth: 1,
-    marginBottom: 32,
+    padding: 16,
+    marginBottom: 30,
   },
   clinicItem: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 12,
     paddingVertical: 8,
   },
   clinicItemName: {
@@ -491,6 +1139,7 @@ const styles = StyleSheet.create({
   clinicItemSub: {
     fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 12,
+    lineHeight: 16,
   },
   bookBtn: {
     flexDirection: 'row',
@@ -510,14 +1159,13 @@ const styles = StyleSheet.create({
     marginVertical: 10,
   },
   centerContainer: {
-    padding: 32,
+    padding: 30,
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
   },
   stateText: {
     fontFamily: 'PlusJakartaSans_500Medium',
-    fontSize: 14,
+    fontSize: 13,
+    marginTop: 10,
   },
   errorCard: {
     flexDirection: 'row',
@@ -542,7 +1190,7 @@ const styles = StyleSheet.create({
   retryBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 6,
     backgroundColor: '#DC2626',
     paddingVertical: 6,
     paddingHorizontal: 10,
@@ -551,12 +1199,175 @@ const styles = StyleSheet.create({
   retryBtnText: {
     color: '#FFFFFF',
     fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+  },
+  // Inspect Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    justifyContent: 'center',
+  },
+  inspectModalCard: {
+    margin: 16,
+    borderRadius: 16,
+    padding: 18,
+    borderWidth: 1,
+    elevation: 5,
+    maxHeight: '85%',
+  },
+  modalScrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 1,
+    elevation: 5,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontFamily: 'PlusJakartaSans_700Bold',
+    fontSize: 17,
+  },
+  modalSub: {
+    fontFamily: 'PlusJakartaSans_400Regular',
     fontSize: 12,
   },
-  emptyTitle: {
+  scanItemCard: {
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginBottom: 12,
+  },
+  scanItemHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  eyeBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  eyeBadgeText: {
+    color: '#FFFFFF',
     fontFamily: 'PlusJakartaSans_700Bold',
-    fontSize: 15,
+    fontSize: 10,
+  },
+  scanDate: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+  },
+  scanGradeText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    marginBottom: 8,
+  },
+  existingReviewsBox: {
+    backgroundColor: '#F1F5F9',
+    padding: 8,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  existingReviewsTitle: {
+    fontFamily: 'PlusJakartaSans_700Bold',
+    fontSize: 11,
+    color: '#334155',
     marginBottom: 4,
-    textAlign: 'center',
+  },
+  reviewItem: {
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    paddingTop: 4,
+    marginTop: 4,
+  },
+  reviewItemGrade: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 11,
+    color: '#0F1E36',
+  },
+  reviewItemNotes: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 11,
+    color: '#475569',
+    fontStyle: 'italic',
+  },
+  reviewItemRec: {
+    fontFamily: 'PlusJakartaSans_500Medium',
+    fontSize: 11,
+    color: '#007A87',
+  },
+  reviewActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  reviewActionBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 12,
+  },
+  inputLabel: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+    marginBottom: 6,
+  },
+  gradeOptionBtn: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  gradeOptionText: {
+    fontFamily: 'PlusJakartaSans_500Medium',
+    fontSize: 12,
+  },
+  textArea: {
+    fontFamily: 'PlusJakartaSans_500Medium',
+    fontSize: 13,
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 12,
+    textAlignVertical: 'top',
+  },
+  modalBtnRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 12,
+    marginTop: 8,
+  },
+  modalCancelBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  modalCancelBtnText: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 13,
+  },
+  modalSaveBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 8,
+  },
+  modalSaveBtnText: {
+    color: '#FFFFFF',
+    fontFamily: 'PlusJakartaSans_700Bold',
+    fontSize: 13,
   },
 });

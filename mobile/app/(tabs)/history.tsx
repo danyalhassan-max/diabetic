@@ -134,9 +134,9 @@ export default function HistoryScreen() {
           const eyeLabel = scan.eye === 'OD' ? 'Right Eye (OD)' : 'Left Eye (OS)';
           const badgeColor =
             scan.grade === 0 ? '#10B981' :
-            scan.grade === 1 ? '#F59E0B' :
-            scan.grade === 2 ? '#EA580C' :
-            scan.grade === 3 ? '#DC2626' : '#991B1B';
+              scan.grade === 1 ? '#F59E0B' :
+                scan.grade === 2 ? '#EA580C' :
+                  scan.grade === 3 ? '#DC2626' : '#991B1B';
 
           return `
             <tr style="border-bottom: 1px solid #E2E8F0; background-color: ${idx % 2 === 0 ? '#FFFFFF' : '#F8FAFC'};">
@@ -430,7 +430,7 @@ export default function HistoryScreen() {
                   <Calendar size={14} color={theme.textMuted} />
                   <Text style={[styles.scanDate, { color: theme.textMuted }]}>{formatDate(scan.created_at)}</Text>
                 </View>
-                <View style={[styles.eyeBadge, { backgroundColor: theme.surfaceSubtle, borderColor: theme.border }]}>
+                <View style={[styles.eyeBadge, { backgroundColor: theme.text, borderColor: theme.border }]}>
                   <Eye size={12} color={theme.primary} />
                   <Text style={[styles.eyeBadgeText, { color: theme.primary }]}>
                     {scan.eye === 'OD' ? 'Right Eye (OD)' : 'Left Eye (OS)'}
@@ -515,9 +515,10 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   filterTab: {
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    borderRadius: 20,
+    paddingTop: 4,
+    paddingBottom: 6,
+    paddingHorizontal: 8,
+    borderRadius: 5,
     backgroundColor: '#E2E8F0',
   },
   filterTabText: {
@@ -555,7 +556,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingTop: 3,
+    paddingBottom: 5,
     borderRadius: 6,
     borderWidth: 1,
   },

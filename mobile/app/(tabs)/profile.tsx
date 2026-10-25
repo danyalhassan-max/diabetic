@@ -11,39 +11,75 @@ import {
   Modal,
   ActivityIndicator,
 } from 'react-native';
-import { User, Shield, Fingerprint, Trash2, Cpu, Download, LogOut, Edit3, X, Check } from 'lucide-react-native';
+import {
+  User,
+  Shield,
+  Fingerprint,
+  Trash2,
+  Cpu,
+  Download,
+  LogOut,
+  Edit3,
+  X,
+  Check,
+  CheckCircle2,
+  BriefcaseMedical,
+  GraduationCap,
+  Award,
+  Building,
+  MapPin,
+  Clock,
+  ShieldAlert,
+} from 'lucide-react-native';
 
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { INFERENCE_API_URL } from '@/lib/supabase';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth, UserProfile } from '@/context/AuthContext';
 
 export default function ProfileScreen() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
   const { user, profile, settings, updateSettings, updateProfile, signOut } = useAuth();
 
+  const isDoctor = profile?.role === 'clinician';
+
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editFullName, setEditFullName] = useState(profile?.full_name || '');
   const [editPhone, setEditPhone] = useState(profile?.phone_number || '');
+  const [editInstitution, setEditInstitution] = useState(profile?.institution_name || '');
+  const [editCity, setEditCity] = useState(profile?.clinic_address_city || '');
+  const [editSpecialty, setEditSpecialty] = useState(profile?.specialty || '');
   const [savingProfile, setSavingProfile] = useState(false);
 
   const handleOpenEditModal = () => {
     setEditFullName(profile?.full_name || '');
     setEditPhone(profile?.phone_number || '');
+    setEditInstitution(profile?.institution_name || '');
+    setEditCity(profile?.clinic_address_city || '');
+    setEditSpecialty(profile?.specialty || '');
     setEditModalVisible(true);
   };
 
   const handleSaveProfile = async () => {
     if (!editFullName.trim()) {
-      Alert.alert('Required Field', 'Please provide a valid full name.');
+      Alert.alert('Required Field', 'Please provide a valid full legal name.');
       return;
     }
     setSavingProfile(true);
-    const { error } = await updateProfile({
+
+    const updates: Partial<UserProfile> = {
       full_name: editFullName.trim(),
       phone_number: editPhone.trim() || null,
-    });
+    };
+
+    if (isDoctor) {
+      updates.institution_name = editInstitution.trim() || null;
+      updates.clinic_address_city = editCity.trim() || null;
+      updates.specialty = editSpecialty.trim() || null;
+    }
+
+    const { error } = await updateProfile(updates);
     setSavingProfile(false);
 
     if (error) {
@@ -69,8 +105,8 @@ export default function ProfileScreen() {
 
   const handleExportData = () => {
     Alert.alert(
-      'Export Personal Health Record',
-      `A clinical export for ${profile?.full_name || user?.email} has been compiled with all recorded retinal scans, diagnostic grades, and clinician grants.`
+      'Export Health Record',
+      `A clinical export for ${profile?.full_name || user?.email} has been compiled with all recorded retinal scans, diagnostic grades, and clinician authorizations.`
     );
   };
 
@@ -94,34 +130,152 @@ export default function ProfileScreen() {
     );
   };
 
-  const displayName = profile?.full_name || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Patient';
-  const roleLabel = profile?.role === 'clinician' ? 'Clinical Practitioner' : 'Screening Patient';
+  const displayName = profile?.full_name || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'User';
+  const roleLabel = isDoctor ? 'Medical Doctor / Clinician' : 'Screening Patient';
   const displayId = `DRC-${(user?.id || '00000000').slice(0, 8).toUpperCase()}`;
 
   return (
     <ScrollView style={[styles.container, { backgroundColor: theme.background }]}>
-      {/* Patient Header Card */}
+      {/* Account Header Card */}
       <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.cardBorder }]}>
         <View style={styles.profileRow}>
-          <View style={[styles.avatarBox, { backgroundColor: theme.primary }]}>
-            <User size={30} color="#FFFFFF" />
+          <View style={[styles.avatarBox, { backgroundColor: isDoctor ? '#0284C7' : theme.primary }]}>
+            {isDoctor ? (
+              <BriefcaseMedical size={28} color="#FFFFFF" />
+            ) : (
+              <User size={30} color="#FFFFFF" />
+            )}
           </View>
           <View style={styles.profileText}>
             <Text style={[styles.userName, { color: theme.text }]}>{displayName}</Text>
             <Text style={[styles.userSub, { color: theme.textMuted }]}>{user?.email || 'No email attached'}</Text>
-            <Text style={[styles.userBadge, { color: theme.primary }]}>
-              {roleLabel} • {displayId}
-            </Text>
+            <View style={styles.badgeRow}>
+              {isDoctor ? (
+                profile?.is_verified ? (
+                  <View style={[styles.statusBadge, { backgroundColor: '#DCFCE7' }]}>
+                    <CheckCircle2 size={12} color="#15803D" />
+                    <Text style={[styles.statusBadgeText, { color: '#15803D' }]}>Verified Clinician</Text>
+                  </View>
+                ) : (
+                  <View style={[styles.statusBadge, { backgroundColor: '#FEF3C7' }]}>
+                    <Clock size={12} color="#D97706" />
+                    <Text style={[styles.statusBadgeText, { color: '#D97706' }]}>Pending Verification</Text>
+                  </View>
+                )
+              ) : null}
+              <Text style={[styles.userBadge, { color: theme.primary }]}>
+                {roleLabel} • {displayId}
+              </Text>
+            </View>
           </View>
           <TouchableOpacity
             style={[styles.editIconBtn, { backgroundColor: theme.surfaceSubtle, borderColor: theme.border }]}
             onPress={handleOpenEditModal}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel="Edit profile details"
           >
             <Edit3 size={16} color={theme.primary} />
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* Doctor-Specific Professional Credentials Card */}
+      {isDoctor && (
+        <>
+          <Text style={[styles.sectionHeading, { color: theme.text }]}>Medical Credentials & Practice</Text>
+          <View style={[styles.card, { backgroundColor: theme.surface, borderColor: theme.cardBorder }]}>
+            {/* Degree */}
+            <View style={styles.credentialRow}>
+              <GraduationCap size={18} color={theme.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.credentialLabel, { color: theme.textMuted }]}>Qualification / Degree</Text>
+                <Text style={[styles.credentialValue, { color: theme.text }]}>
+                  {profile?.medical_degree || 'Medical Qualification Not Set'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={[styles.divider, { backgroundColor: theme.border }]} />
+
+            {/* License Number & Authority */}
+            <View style={styles.credentialRow}>
+              <Award size={18} color={theme.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.credentialLabel, { color: theme.textMuted }]}>Medical Registration & Jurisdiction</Text>
+                <Text style={[styles.credentialValue, { color: theme.text }]}>
+                  {profile?.medical_license_no || 'License Not Registered'}
+                  {profile?.jurisdiction ? ` • ${profile.jurisdiction}` : ''}
+                </Text>
+              </View>
+            </View>
+
+            <View style={[styles.divider, { backgroundColor: theme.border }]} />
+
+            {/* Hospital / Clinic */}
+            <View style={styles.credentialRow}>
+              <Building size={18} color={theme.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.credentialLabel, { color: theme.textMuted }]}>Hospital / Practice Location</Text>
+                <Text style={[styles.credentialValue, { color: theme.text }]}>
+                  {profile?.institution_name || 'Practice Not Set'}
+                  {profile?.clinic_address_city ? `, ${profile.clinic_address_city}` : ''}
+                </Text>
+              </View>
+            </View>
+
+            <View style={[styles.divider, { backgroundColor: theme.border }]} />
+
+            {/* Specialty */}
+            <View style={styles.credentialRow}>
+              <BriefcaseMedical size={18} color={theme.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.credentialLabel, { color: theme.textMuted }]}>Specialty & Experience</Text>
+                <Text style={[styles.credentialValue, { color: theme.text }]}>
+                  {profile?.specialty || 'Ophthalmology'}
+                  {profile?.years_of_experience ? ` • ${profile.years_of_experience} Years Exp.` : ''}
+                </Text>
+              </View>
+            </View>
+
+            {/* Verification Status Explanation Banner */}
+            <View
+              style={[
+                styles.verificationCard,
+                {
+                  backgroundColor: profile?.is_verified ? '#F0FDF4' : '#FFFBEB',
+                  borderColor: profile?.is_verified ? '#BBF7D0' : '#FDE68A',
+                },
+              ]}
+            >
+              {profile?.is_verified ? (
+                <CheckCircle2 size={18} color="#15803D" style={{ marginTop: 2 }} />
+              ) : (
+                <ShieldAlert size={18} color="#D97706" style={{ marginTop: 2 }} />
+              )}
+              <View style={{ flex: 1 }}>
+                <Text
+                  style={[
+                    styles.verificationTitle,
+                    { color: profile?.is_verified ? '#15803D' : '#92400E' },
+                  ]}
+                >
+                  {profile?.is_verified ? 'Authorized Clinician' : 'Verification Under Review'}
+                </Text>
+                <Text
+                  style={[
+                    styles.verificationDesc,
+                    { color: profile?.is_verified ? '#166534' : '#B45309' },
+                  ]}
+                >
+                  {profile?.is_verified
+                    ? 'Your medical license has been verified. You have full clinical authorization to review patient retinal scans and submit signed second opinions.'
+                    : 'Your medical credentials are in the administrative verification queue. You can redeem patient access codes and view scans in read-only mode, but clinical review submission is locked until approved.'}
+                </Text>
+              </View>
+            </View>
+          </View>
+        </>
+      )}
 
       {/* Security & Access Controls */}
       <Text style={[styles.sectionHeading, { color: theme.text }]}>Security & Privacy</Text>
@@ -203,57 +357,93 @@ export default function ProfileScreen() {
       {/* Edit Profile Modal */}
       <Modal visible={editModalVisible} transparent animationType="slide">
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { backgroundColor: theme.surface, borderColor: theme.cardBorder }]}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: theme.text }]}>Edit Personal Details</Text>
-              <TouchableOpacity onPress={() => setEditModalVisible(false)}>
-                <X size={20} color={theme.textMuted} />
-              </TouchableOpacity>
+          <ScrollView
+            contentContainerStyle={styles.modalScrollContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={[styles.modalCard, { backgroundColor: theme.surface, borderColor: theme.cardBorder }]}>
+              <View style={styles.modalHeader}>
+                <Text style={[styles.modalTitle, { color: theme.text }]}>Edit Personal Details</Text>
+                <TouchableOpacity onPress={() => setEditModalVisible(false)}>
+                  <X size={20} color={theme.textMuted} />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={[styles.modalLabel, { color: theme.text }]}>Full Name</Text>
+              <TextInput
+                style={[styles.modalInput, { color: theme.text, borderColor: theme.border, backgroundColor: theme.background }]}
+                value={editFullName}
+                onChangeText={setEditFullName}
+                placeholder="Full legal name"
+                placeholderTextColor={theme.textMuted}
+              />
+
+              <Text style={[styles.modalLabel, { color: theme.text }]}>Contact Phone Number (Optional)</Text>
+              <TextInput
+                style={[styles.modalInput, { color: theme.text, borderColor: theme.border, backgroundColor: theme.background }]}
+                value={editPhone}
+                onChangeText={setEditPhone}
+                placeholder="+1 (555) 000-0000"
+                placeholderTextColor={theme.textMuted}
+                keyboardType="phone-pad"
+              />
+
+              {isDoctor && (
+                <>
+                  <Text style={[styles.modalLabel, { color: theme.text }]}>Hospital / Clinic Name</Text>
+                  <TextInput
+                    style={[styles.modalInput, { color: theme.text, borderColor: theme.border, backgroundColor: theme.background }]}
+                    value={editInstitution}
+                    onChangeText={setEditInstitution}
+                    placeholder="e.g. City Eye Hospital"
+                    placeholderTextColor={theme.textMuted}
+                  />
+
+                  <Text style={[styles.modalLabel, { color: theme.text }]}>Practice City</Text>
+                  <TextInput
+                    style={[styles.modalInput, { color: theme.text, borderColor: theme.border, backgroundColor: theme.background }]}
+                    value={editCity}
+                    onChangeText={setEditCity}
+                    placeholder="e.g. London"
+                    placeholderTextColor={theme.textMuted}
+                  />
+
+                  <Text style={[styles.modalLabel, { color: theme.text }]}>Specialty</Text>
+                  <TextInput
+                    style={[styles.modalInput, { color: theme.text, borderColor: theme.border, backgroundColor: theme.background }]}
+                    value={editSpecialty}
+                    onChangeText={setEditSpecialty}
+                    placeholder="e.g. Ophthalmology"
+                    placeholderTextColor={theme.textMuted}
+                  />
+                </>
+              )}
+
+              <View style={styles.modalBtnRow}>
+                <TouchableOpacity
+                  style={[styles.modalCancelBtn, { borderColor: theme.border }]}
+                  onPress={() => setEditModalVisible(false)}
+                >
+                  <Text style={[styles.modalCancelBtnText, { color: theme.textMuted }]}>Cancel</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.modalSaveBtn, { backgroundColor: theme.primary }]}
+                  onPress={handleSaveProfile}
+                  disabled={savingProfile}
+                >
+                  {savingProfile ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Check size={16} color="#FFFFFF" />
+                      <Text style={styles.modalSaveBtnText}>Save</Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
-
-            <Text style={[styles.modalLabel, { color: theme.text }]}>Full Name</Text>
-            <TextInput
-              style={[styles.modalInput, { color: theme.text, borderColor: theme.border, backgroundColor: theme.background }]}
-              value={editFullName}
-              onChangeText={setEditFullName}
-              placeholder="Full legal name"
-              placeholderTextColor={theme.textMuted}
-            />
-
-            <Text style={[styles.modalLabel, { color: theme.text }]}>Phone Number (Optional)</Text>
-            <TextInput
-              style={[styles.modalInput, { color: theme.text, borderColor: theme.border, backgroundColor: theme.background }]}
-              value={editPhone}
-              onChangeText={setEditPhone}
-              placeholder="+1 (555) 000-0000"
-              placeholderTextColor={theme.textMuted}
-              keyboardType="phone-pad"
-            />
-
-            <View style={styles.modalBtnRow}>
-              <TouchableOpacity
-                style={[styles.modalCancelBtn, { borderColor: theme.border }]}
-                onPress={() => setEditModalVisible(false)}
-              >
-                <Text style={[styles.modalCancelBtnText, { color: theme.textMuted }]}>Cancel</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.modalSaveBtn, { backgroundColor: theme.primary }]}
-                onPress={handleSaveProfile}
-                disabled={savingProfile}
-              >
-                {savingProfile ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    <Check size={16} color="#FFFFFF" />
-                    <Text style={styles.modalSaveBtnText}>Save</Text>
-                  </View>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
+          </ScrollView>
         </View>
       </Modal>
     </ScrollView>
@@ -299,16 +489,68 @@ const styles = StyleSheet.create({
   userSub: {
     fontFamily: 'PlusJakartaSans_500Medium',
     fontSize: 13,
-    marginBottom: 2,
+    marginBottom: 4,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+  },
+  statusBadgeText: {
+    fontFamily: 'PlusJakartaSans_700Bold',
+    fontSize: 11,
   },
   userBadge: {
     fontFamily: 'PlusJakartaSans_600SemiBold',
-    fontSize: 12,
+    fontSize: 11,
   },
   sectionHeading: {
     fontFamily: 'PlusJakartaSans_700Bold',
     fontSize: 15,
     marginBottom: 10,
+  },
+  credentialRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 10,
+  },
+  credentialLabel: {
+    fontFamily: 'PlusJakartaSans_500Medium',
+    fontSize: 11,
+    marginBottom: 2,
+  },
+  credentialValue: {
+    fontFamily: 'PlusJakartaSans_600SemiBold',
+    fontSize: 14,
+  },
+  verificationCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginTop: 12,
+  },
+  verificationTitle: {
+    fontFamily: 'PlusJakartaSans_700Bold',
+    fontSize: 13,
+    marginBottom: 2,
+  },
+  verificationDesc: {
+    fontFamily: 'PlusJakartaSans_400Regular',
+    fontSize: 12,
+    lineHeight: 17,
   },
   settingItem: {
     flexDirection: 'row',
@@ -369,6 +611,10 @@ const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    justifyContent: 'center',
+  },
+  modalScrollContent: {
+    flexGrow: 1,
     justifyContent: 'center',
     padding: 20,
   },

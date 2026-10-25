@@ -12,7 +12,24 @@ export interface UserProfile {
   avatar_url?: string | null;
   medical_license_no?: string | null;
   institution_name?: string | null;
+  medical_degree?: string | null;
+  specialty?: string | null;
+  jurisdiction?: string | null;
+  clinic_address_city?: string | null;
+  years_of_experience?: number | null;
   is_verified?: boolean;
+  verification_status?: 'pending' | 'approved' | 'rejected';
+}
+
+export interface DoctorRegistrationData {
+  medical_degree?: string;
+  medical_license_no?: string;
+  specialty?: string;
+  jurisdiction?: string;
+  institution_name?: string;
+  clinic_address_city?: string;
+  phone_number?: string;
+  years_of_experience?: number;
 }
 
 export interface UserSettings {
@@ -27,7 +44,13 @@ interface AuthContextType {
   settings: UserSettings;
   isLoading: boolean;
   signIn: (email: string, pass: string) => Promise<{ error: Error | null }>;
-  signUp: (email: string, pass: string, fullName: string, role?: 'patient' | 'clinician') => Promise<{ error: Error | null; data?: any }>;
+  signUp: (
+    email: string,
+    pass: string,
+    fullName: string,
+    role?: 'patient' | 'clinician',
+    doctorDetails?: DoctorRegistrationData
+  ) => Promise<{ error: Error | null; data?: any }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
   updateProfile: (updates: Partial<UserProfile>) => Promise<{ error: Error | null }>;
@@ -90,6 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           role: 'patient',
           full_name: 'Patient',
           is_verified: false,
+          verification_status: 'pending',
         });
       }
     } catch (err) {
@@ -161,29 +185,60 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     email: string,
     pass: string,
     fullName: string,
-    role: 'patient' | 'clinician' = 'patient'
+    role: 'patient' | 'clinician' = 'patient',
+    doctorDetails?: DoctorRegistrationData
   ) => {
     try {
       const cleanEmail = email.trim().toLowerCase();
+      const trimmedName = fullName.trim();
+      const userRole = role || 'patient';
+
+      const metadata: Record<string, any> = {
+        full_name: trimmedName,
+        role: userRole,
+      };
+
+      if (userRole === 'clinician' && doctorDetails) {
+        if (doctorDetails.medical_degree) metadata.medical_degree = doctorDetails.medical_degree.trim();
+        if (doctorDetails.medical_license_no) metadata.medical_license_no = doctorDetails.medical_license_no.trim();
+        if (doctorDetails.specialty) metadata.specialty = doctorDetails.specialty.trim();
+        if (doctorDetails.jurisdiction) metadata.jurisdiction = doctorDetails.jurisdiction.trim();
+        if (doctorDetails.institution_name) metadata.institution_name = doctorDetails.institution_name.trim();
+        if (doctorDetails.clinic_address_city) metadata.clinic_address_city = doctorDetails.clinic_address_city.trim();
+        if (doctorDetails.phone_number) metadata.phone_number = doctorDetails.phone_number.trim();
+        if (doctorDetails.years_of_experience !== undefined) metadata.years_of_experience = doctorDetails.years_of_experience;
+      }
+
       const { data, error } = await supabase.auth.signUp({
         email: cleanEmail,
         password: pass,
         options: {
-          data: {
-            full_name: fullName.trim(),
-            role,
-          },
+          data: metadata,
         },
       });
 
       if (!error && data?.user) {
-        // Upsert into public.profiles to guarantee record is present immediately
+        const profilePayload: Record<string, any> = {
+          id: data.user.id,
+          full_name: trimmedName,
+          role: userRole,
+          is_verified: false,
+          verification_status: 'pending',
+        };
+
+        if (userRole === 'clinician' && doctorDetails) {
+          if (doctorDetails.medical_degree) profilePayload.medical_degree = doctorDetails.medical_degree.trim();
+          if (doctorDetails.medical_license_no) profilePayload.medical_license_no = doctorDetails.medical_license_no.trim();
+          if (doctorDetails.specialty) profilePayload.specialty = doctorDetails.specialty.trim();
+          if (doctorDetails.jurisdiction) profilePayload.jurisdiction = doctorDetails.jurisdiction.trim();
+          if (doctorDetails.institution_name) profilePayload.institution_name = doctorDetails.institution_name.trim();
+          if (doctorDetails.clinic_address_city) profilePayload.clinic_address_city = doctorDetails.clinic_address_city.trim();
+          if (doctorDetails.phone_number) profilePayload.phone_number = doctorDetails.phone_number.trim();
+          if (doctorDetails.years_of_experience !== undefined) profilePayload.years_of_experience = doctorDetails.years_of_experience;
+        }
+
         try {
-          await supabase.from('profiles').upsert({
-            id: data.user.id,
-            full_name: fullName.trim(),
-            role,
-          });
+          await supabase.from('profiles').upsert(profilePayload);
         } catch {
           // Trigger may have already created it
         }

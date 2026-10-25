@@ -497,9 +497,9 @@ const styles = StyleSheet.create({
     padding: 3,
   },
   toggleBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 5,
   },
   toggleText: {
     fontFamily: 'PlusJakartaSans_500Medium',
