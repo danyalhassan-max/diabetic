@@ -10,6 +10,22 @@ from flask import Flask, jsonify, render_template_string, request
 from flask_cors import CORS
 from PIL import Image, UnidentifiedImageError
 
+from gemini_validator import (
+    classify_fundus_image,
+    validate_image_bytes,
+    FundusValidationError,
+    InvalidImageError,
+    NonFundusImageError,
+    UncertainFundusImageError,
+    GeminiConfigurationError,
+    GeminiRateLimitError,
+    GeminiTimeoutError,
+    GeminiUnavailableError,
+    ValidationStatus,
+    is_validation_enabled,
+    get_gemini_api_key,
+)
+
 
 PROJECT_DIR = Path(__file__).resolve().parent
 MODEL_PATH = Path(
@@ -187,9 +203,51 @@ def create_app(model=None):
                 PAGE, error="Choose an image file before submitting."
             ), 400
 
+        raw_bytes = uploaded.read(MAX_UPLOAD_BYTES + 1)
+        if len(raw_bytes) > MAX_UPLOAD_BYTES:
+            return render_template_string(
+                PAGE, error="The image is too large. Maximum upload size is 10 MB."
+            ), 413
+
+        try:
+            sanitized_bytes, mime_type = validate_image_bytes(raw_bytes)
+        except InvalidImageError as exc:
+            return render_template_string(PAGE, error=str(exc)), 400
+
+        try:
+            val_result = classify_fundus_image(sanitized_bytes, mime_type=mime_type)
+        except GeminiConfigurationError:
+            return render_template_string(
+                PAGE, error="Image validation configuration error on server."
+            ), 500
+        except GeminiRateLimitError:
+            return render_template_string(
+                PAGE, error="Validation rate limit exceeded. Please try again shortly."
+            ), 429
+        except GeminiTimeoutError:
+            return render_template_string(
+                PAGE, error="Validation request timed out. Please try again."
+            ), 504
+        except GeminiUnavailableError:
+            return render_template_string(
+                PAGE, error="Image validation service is temporarily unavailable."
+            ), 503
+
+        if val_result.status == ValidationStatus.NON_FUNDUS:
+            return render_template_string(
+                PAGE,
+                error=f"Validation Rejected: The uploaded image does not appear to be a retinal fundus photograph ({val_result.reason}).",
+            ), 400
+
+        if val_result.status == ValidationStatus.UNCERTAIN:
+            return render_template_string(
+                PAGE,
+                error=f"Validation Notice: Unable to verify retinal image clarity ({val_result.reason}). Please upload a clear fundus photograph.",
+            ), 400
+
         try:
             grade, label, _probs = predict_grade(
-                loaded_model, uploaded.read(MAX_UPLOAD_BYTES + 1)
+                loaded_model, sanitized_bytes
             )
         except ValueError as exc:
             return render_template_string(PAGE, error=str(exc)), 400
@@ -211,6 +269,8 @@ def create_app(model=None):
                 "model_loaded": True,
                 "model_version": MODEL_VERSION,
                 "auth_enforced": has_secret,
+                "gemini_validation_enabled": is_validation_enabled(),
+                "gemini_configured": bool(get_gemini_api_key()),
             }
         ), 200
 
@@ -242,7 +302,11 @@ def create_app(model=None):
                 image_bytes = base64.b64decode(raw_base64)
             except Exception as exc:
                 return jsonify(
-                    {"success": False, "error": f"Invalid base64 encoding: {exc}"}
+                    {
+                        "success": False,
+                        "error": f"Invalid base64 encoding: {exc}",
+                        "error_code": "INVALID_IMAGE",
+                    }
                 ), 400
 
         if not image_bytes:
@@ -250,21 +314,109 @@ def create_app(model=None):
                 {
                     "success": False,
                     "error": "No image provided. Send a multipart file ('image') or base64 JSON.",
+                    "error_code": "INVALID_IMAGE",
                 }
             ), 400
 
         if len(image_bytes) > MAX_UPLOAD_BYTES:
             return jsonify(
-                {"success": False, "error": "Image exceeds 10 MB limit."}
+                {
+                    "success": False,
+                    "error": "Image exceeds 10 MB limit.",
+                    "error_code": "INVALID_IMAGE",
+                }
             ), 413
 
+        # Step 1: Pre-validate image bytes and dimensions before any external API call
         try:
-            grade, label, probabilities = predict_grade(loaded_model, image_bytes)
+            sanitized_bytes, mime_type = validate_image_bytes(image_bytes)
+        except InvalidImageError as exc:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": str(exc),
+                    "error_code": "INVALID_IMAGE",
+                }
+            ), 400
+
+        # Step 2: Call Gemini fundus validation gate
+        try:
+            val_result = classify_fundus_image(sanitized_bytes, mime_type=mime_type)
+        except GeminiConfigurationError:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": "Image validation service configuration error.",
+                    "error_code": "GEMINI_CONFIGURATION_ERROR",
+                }
+            ), 500
+        except GeminiRateLimitError:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": "Image validation service rate limit exceeded. Please try again shortly.",
+                    "error_code": "GEMINI_RATE_LIMITED",
+                }
+            ), 429
+        except GeminiTimeoutError:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": "Image validation service timed out. Please try again.",
+                    "error_code": "GEMINI_TIMEOUT",
+                }
+            ), 504
+        except GeminiUnavailableError:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": "Image validation service is currently unavailable.",
+                    "error_code": "GEMINI_VALIDATION_UNAVAILABLE",
+                }
+            ), 503
+
+        # Step 3: Handle non-fundus classification
+        if val_result.status == ValidationStatus.NON_FUNDUS:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": "The uploaded image does not appear to be a retinal fundus photograph.",
+                    "error_code": "NON_FUNDUS_IMAGE",
+                    "reason": val_result.reason,
+                    "validation_status": "non_fundus",
+                }
+            ), 400
+
+        # Step 4: Handle uncertain classification
+        if val_result.status == ValidationStatus.UNCERTAIN:
+            return jsonify(
+                {
+                    "success": False,
+                    "error": "Unable to verify if the uploaded image is a suitable retinal fundus photograph. Please upload a clear fundus photograph.",
+                    "error_code": "FUNDUS_CLASSIFICATION_UNCERTAIN",
+                    "reason": val_result.reason,
+                    "validation_status": "uncertain",
+                }
+            ), 400
+
+        # Step 5: Valid fundus image -> invoke existing DenseNet-121 inference pipeline
+        try:
+            grade, label, probabilities = predict_grade(loaded_model, sanitized_bytes)
         except ValueError as exc:
-            return jsonify({"success": False, "error": str(exc)}), 400
+            return jsonify(
+                {
+                    "success": False,
+                    "error": str(exc),
+                    "error_code": "INVALID_IMAGE",
+                }
+            ), 400
         except Exception as exc:
             return jsonify(
-                {"success": False, "error": f"Inference failed: {exc}"}
+                {
+                    "success": False,
+                    "error": f"Inference failed: {exc}",
+                    "error_code": "INFERENCE_FAILED",
+                }
             ), 500
 
         return jsonify(
@@ -274,6 +426,7 @@ def create_app(model=None):
                 "label": label,
                 "probabilities": probabilities,
                 "model_version": MODEL_VERSION,
+                "validation": val_result.to_dict(),
             }
         ), 200
 
@@ -281,7 +434,11 @@ def create_app(model=None):
     def upload_too_large(_error):
         if request.path.startswith("/api/"):
             return jsonify(
-                {"success": False, "error": "Maximum upload size is 10 MB."}
+                {
+                    "success": False,
+                    "error": "Maximum upload size is 10 MB.",
+                    "error_code": "INVALID_IMAGE",
+                }
             ), 413
         return render_template_string(
             PAGE, error="The image is too large. Maximum upload size is 10 MB."

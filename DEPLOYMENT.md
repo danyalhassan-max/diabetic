@@ -85,7 +85,7 @@ Expected output:
      --cpu 2 \
      --min-instances 1 \
      --max-instances 10 \
-     --set-env-vars "SUPABASE_JWT_SECRET=<YOUR_SECRET>" \
+     --set-env-vars "SUPABASE_JWT_SECRET=<YOUR_SECRET>,GEMINI_API_KEY=<YOUR_GEMINI_KEY>,GEMINI_MODEL=gemini-2.5-flash,ENABLE_GEMINI_VALIDATION=true" \
      --allow-unauthenticated
    ```
    *(Note: Set `--min-instances 1` to eliminate cold-start latency from TensorFlow model loading).*
@@ -98,6 +98,10 @@ Expected output:
    - `PORT=5000`
    - `RETINA_MODEL_PATH=/app/retfound_model.keras`
    - `SUPABASE_JWT_SECRET=<YOUR_SUPABASE_JWT_SECRET>`
+   - `GEMINI_API_KEY=<YOUR_GEMINI_API_KEY>`
+   - `GEMINI_MODEL=gemini-2.5-flash`
+   - `ENABLE_GEMINI_VALIDATION=true`
+   - `GEMINI_TIMEOUT_SECONDS=10`
    - `GUNICORN_WORKERS=2`
 5. Set Health Check Path: `/api/health`.
 

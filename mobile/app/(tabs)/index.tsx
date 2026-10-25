@@ -108,9 +108,67 @@ export default function ScreeningScreen() {
         });
       }
 
-      const data = await response.json();
+      let data: any;
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error('Received unparseable response from screening server.');
+      }
+
       if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Diagnostic inference failed.');
+        setResult(null);
+        const errorCode = data.error_code;
+        const errorReason = data.reason ? `\n\nDetail: ${data.reason}` : '';
+
+        if (errorCode === 'NON_FUNDUS_IMAGE') {
+          Alert.alert(
+            'Non-Retinal Image Detected',
+            `The selected photograph does not appear to be an internal retinal fundus image.${errorReason}\n\nPlease choose or capture a valid retinal fundus photograph to continue screening.`
+          );
+          return;
+        }
+
+        if (errorCode === 'FUNDUS_CLASSIFICATION_UNCERTAIN') {
+          Alert.alert(
+            'Retinal Image Quality Uncertain',
+            `The system could not verify the retinal landmarks in this photograph with sufficient certainty.${errorReason}\n\nPlease upload or capture a clearer, well-focused retinal fundus image.`
+          );
+          return;
+        }
+
+        if (errorCode === 'INVALID_IMAGE') {
+          Alert.alert(
+            'Invalid Image Format',
+            data.error || 'The uploaded file could not be read as a valid image. Please provide a standard JPEG or PNG image.'
+          );
+          return;
+        }
+
+        if (
+          errorCode === 'GEMINI_RATE_LIMITED' ||
+          errorCode === 'GEMINI_TIMEOUT' ||
+          errorCode === 'GEMINI_VALIDATION_UNAVAILABLE'
+        ) {
+          Alert.alert(
+            'Validation Service Temporarily Unavailable',
+            'The AI image validation service is temporarily unavailable. Please wait a moment and try again.'
+          );
+          return;
+        }
+
+        if (errorCode === 'GEMINI_CONFIGURATION_ERROR') {
+          Alert.alert(
+            'Configuration Notice',
+            'Image validation service is not properly configured on the server. Please contact your system administrator.'
+          );
+          return;
+        }
+
+        Alert.alert(
+          'Diagnostic Assessment Notice',
+          data.error || 'Diagnostic assessment could not be completed at this time.'
+        );
+        return;
       }
 
       setResult({
@@ -120,7 +178,11 @@ export default function ScreeningScreen() {
         model_version: data.model_version,
       });
     } catch (err: any) {
-      Alert.alert('Inference Failed', `${err.message}\nMake sure the AI backend is active on ${INFERENCE_API_URL}.`);
+      setResult(null);
+      Alert.alert(
+        'Connection Failed',
+        `${err.message || 'Could not connect to the screening server.'}\n\nPlease ensure the AI backend is active on ${INFERENCE_API_URL}.`
+      );
     } finally {
       setLoading(false);
     }

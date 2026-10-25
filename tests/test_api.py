@@ -13,6 +13,18 @@ def client():
         yield test_client
 
 
+@pytest.fixture(autouse=True)
+def mock_gemini_valid(monkeypatch):
+    from gemini_validator import ValidationResult, ValidationStatus
+    monkeypatch.setattr(
+        "app.classify_fundus_image",
+        lambda *args, **kwargs: ValidationResult(
+            status=ValidationStatus.VALID_FUNDUS,
+            reason="Mocked valid fundus for baseline api tests."
+        )
+    )
+
+
 def create_test_image_bytes():
     img = Image.new("RGB", (224, 224), color=(160, 45, 35))
     buf = io.BytesIO()
