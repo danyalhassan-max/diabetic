@@ -238,14 +238,14 @@ def get_gemini_api_key() -> Optional[str]:
 
 
 def get_gemini_model_name() -> str:
-    return os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip()
+    return os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite").strip()
 
 
 def get_gemini_timeout() -> float:
     try:
-        return float(os.environ.get("GEMINI_TIMEOUT_SECONDS", "10.0"))
+        return float(os.environ.get("GEMINI_TIMEOUT_SECONDS", "15.0"))
     except ValueError:
-        return 10.0
+        return 15.0
 
 
 def classify_fundus_image(
@@ -292,7 +292,11 @@ def classify_fundus_image(
             from google.genai import types
             client = genai.Client(
                 api_key=api_key,
-                http_options=types.HttpOptions(timeout=timeout_sec),
+                http_options=types.HttpOptions(
+                    httpx_client=httpx.Client(
+                        timeout=httpx.Timeout(timeout_sec, connect=timeout_sec)
+                    ),
+                ),
             )
         except Exception as exc:
             logger.error(f"Failed to initialize Gemini client: {exc}")
