@@ -14,7 +14,8 @@ import { Camera, Image as ImageIcon, CheckCircle, AlertTriangle, Info, RefreshCw
 
 import Colors, { SeverityColors } from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
-import { INFERENCE_API_URL } from '@/lib/supabase';
+import { INFERENCE_API_URL, supabase } from '@/lib/supabase';
+import { useAuth } from '@/context/AuthContext';
 
 interface PredictionResult {
   grade: number;
@@ -26,6 +27,7 @@ interface PredictionResult {
 export default function ScreeningScreen() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
+  const { user } = useAuth();
 
   const [selectedEye, setSelectedEye] = useState<'OD' | 'OS'>('OD');
   const [imageUri, setImageUri] = useState<string | null>(null);
@@ -177,6 +179,52 @@ export default function ScreeningScreen() {
         probabilities: data.probabilities,
         model_version: data.model_version,
       });
+
+      // Persist scan record for the authenticated user
+      if (user?.id) {
+        try {
+          const timestamp = Date.now();
+          const storageFilename = `${user.id}/${timestamp}_${selectedEye}.jpg`;
+
+          // Attempt storage upload if imageBase64 is available
+          if (imageBase64) {
+            try {
+              const atobFn = (globalThis as any).atob;
+              if (typeof atobFn === 'function') {
+                const binaryString = atobFn(imageBase64);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                  bytes[i] = binaryString.charCodeAt(i);
+                }
+                await supabase.storage
+                  .from('retinal-scans')
+                  .upload(storageFilename, bytes.buffer, {
+                    contentType: 'image/jpeg',
+                    upsert: true,
+                  });
+              }
+            } catch (storageErr) {
+              console.warn('Storage upload notice (continuing to DB record):', storageErr);
+            }
+          }
+
+          const { error: dbError } = await supabase.from('scans').insert({
+            patient_id: user.id,
+            eye: selectedEye,
+            storage_path: storageFilename,
+            grade: data.grade,
+            label: data.label,
+            probabilities: data.probabilities,
+            model_version: data.model_version || 'densenet121_ordinal_v1',
+          });
+
+          if (dbError) {
+            console.warn('Scan database save notice:', dbError.message);
+          }
+        } catch (persistErr) {
+          console.warn('Scan persistence error:', persistErr);
+        }
+      }
     } catch (err: any) {
       setResult(null);
       Alert.alert(
