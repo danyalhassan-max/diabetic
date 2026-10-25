@@ -1,0 +1,30 @@
+services:
+  retina-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: diabetic-retinopathy-api
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=5000
+      - RETINA_MODEL_PATH=/app/retfound_model.keras
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET:-}
+      - GUNICORN_WORKERS=2
+      - GUNICORN_THREADS=2
+      - LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2500M
+        reservations:
+          cpus: "1.0"
+          memory: 1024M

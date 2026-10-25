@@ -1,0 +1,31 @@
+# Git & VCS
+.git/
+.gitignore
+
+# Virtual Environments
+.venv/
+venv/
+env/
+
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# Notebooks & exploration files
+85.ipynb
+*.ipynb
+history.json
+retfound_history.json
+
+# Test suites & caches
+.pytest_cache/
+tests/
+.coverage
+htmlcov/
+
+# Documentation & Supabase migrations (handled externally)
+supabase/
+mobile/
+*.md

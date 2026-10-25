@@ -1,1 +1,8 @@
 Flask>=3.0,<4
+tensorflow>=2.16.0
+Pillow>=10.0.0
+numpy
+flask-cors>=5.0.0
+pyjwt[crypto]>=2.9.0
+pytest>=8.0.0
+gunicorn>=23.0.0
