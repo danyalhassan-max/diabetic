@@ -8,6 +8,7 @@ import {
   Alert,
   ActivityIndicator,
   RefreshControl,
+  Platform,
 } from 'react-native';
 import { Calendar, Eye, FileText, ChevronRight, CheckCircle, AlertTriangle, RefreshCw, Clock } from 'lucide-react-native';
 
@@ -15,6 +16,9 @@ import Colors, { SeverityColors } from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
+import * as FileSystem from 'expo-file-system/legacy';
 
 interface ScanItem {
   id: string;
@@ -26,16 +30,18 @@ interface ScanItem {
   probabilities?: number[];
   storage_path?: string;
   patient_notes?: string | null;
+  model_version?: string;
 }
 
 export default function HistoryScreen() {
   const colorScheme = useColorScheme();
   const theme = Colors[colorScheme ?? 'light'];
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
 
   const [scans, setScans] = useState<ScanItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [filterEye, setFilterEye] = useState<'ALL' | 'OD' | 'OS'>('ALL');
 
@@ -104,15 +110,211 @@ export default function HistoryScreen() {
     }
   };
 
-  const handleExportPDF = () => {
+  const handleExportPDF = async () => {
     if (scans.length === 0) {
       Alert.alert('No Data to Export', 'There are no retinal scans recorded to generate a longitudinal PDF.');
       return;
     }
-    Alert.alert(
-      'Export PDF Report',
-      `Longitudinal summary prepared with ${scans.length} screening records for clinical review and doctor sign-off.`
-    );
+
+    setExportingPdf(true);
+
+    try {
+      const patientName = profile?.full_name || user?.user_metadata?.full_name || user?.email?.split('@')[0] || 'Patient';
+      const patientId = `DRC-${(user?.id || '00000000').slice(0, 8).toUpperCase()}`;
+      const reportDate = new Date().toLocaleDateString('en-US', {
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+
+      const rowsHtml = scans
+        .map((scan, idx) => {
+          const eyeLabel = scan.eye === 'OD' ? 'Right Eye (OD)' : 'Left Eye (OS)';
+          const badgeColor =
+            scan.grade === 0 ? '#10B981' :
+            scan.grade === 1 ? '#F59E0B' :
+            scan.grade === 2 ? '#EA580C' :
+            scan.grade === 3 ? '#DC2626' : '#991B1B';
+
+          return `
+            <tr style="border-bottom: 1px solid #E2E8F0; background-color: ${idx % 2 === 0 ? '#FFFFFF' : '#F8FAFC'};">
+              <td style="padding: 10px; font-size: 12px; color: #334155;">${formatDate(scan.created_at)}</td>
+              <td style="padding: 10px; font-size: 12px; font-weight: 600; color: #0F172A;">${eyeLabel}</td>
+              <td style="padding: 10px; text-align: center;">
+                <span style="display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; color: #FFFFFF; background-color: ${badgeColor};">
+                  Grade ${scan.grade}
+                </span>
+              </td>
+              <td style="padding: 10px; font-size: 12px; color: #1E293B;">${scan.label}</td>
+              <td style="padding: 10px; font-size: 11px; color: #64748B;">${scan.patient_notes || 'Routine screening'}</td>
+            </tr>
+          `;
+        })
+        .join('');
+
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Clinical Retinal Screening Report</title>
+          <style>
+            @page { margin: 20mm 16mm; size: A4; }
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #0F172A; margin: 0; padding: 20px; font-size: 13px; line-height: 1.5; }
+            .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #007A87; padding-bottom: 16px; margin-bottom: 20px; }
+            .title-area h1 { margin: 0; font-size: 22px; color: #007A87; }
+            .title-area p { margin: 4px 0 0; font-size: 12px; color: #64748B; }
+            .badge-ai { background-color: #E0F2FE; color: #0284C7; font-weight: 700; padding: 4px 10px; border-radius: 6px; font-size: 11px; display: inline-block; margin-bottom: 6px; }
+            .patient-card { background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 14px 18px; margin-bottom: 24px; display: table; width: 100%; box-sizing: border-box; }
+            .patient-col { display: table-cell; vertical-align: top; width: 50%; }
+            .patient-field { margin-bottom: 6px; }
+            .field-label { font-size: 11px; color: #64748B; font-weight: 600; text-transform: uppercase; }
+            .field-value { font-size: 13px; color: #0F172A; font-weight: 700; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+            th { background-color: #007A87; color: #FFFFFF; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; padding: 10px; text-align: left; }
+            .guidance-box { background-color: #F0FDFA; border-left: 4px solid #007A87; padding: 12px 16px; border-radius: 4px; margin-bottom: 24px; }
+            .guidance-title { font-weight: 700; color: #007A87; margin-bottom: 4px; font-size: 13px; }
+            .guidance-body { font-size: 12px; color: #134E4A; line-height: 1.5; }
+            .signoff-box { border: 1px solid #CBD5E1; border-radius: 8px; padding: 16px; margin-top: 28px; }
+            .signoff-title { font-size: 12px; font-weight: 700; text-transform: uppercase; color: #334155; margin-bottom: 12px; }
+            .signoff-row { display: table; width: 100%; margin-top: 14px; }
+            .signoff-col { display: table-cell; width: 50%; vertical-align: bottom; }
+            .sig-line { border-bottom: 1px solid #94A3B8; width: 85%; height: 24px; margin-bottom: 4px; }
+            .sig-label { font-size: 11px; color: #64748B; }
+            .footer { margin-top: 30px; text-align: center; font-size: 10px; color: #94A3B8; border-top: 1px solid #E2E8F0; padding-top: 12px; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div class="title-area">
+              <span class="badge-ai">CLINICAL SCREENING REPORT</span>
+              <h1>Diabetic Retinopathy Longitudinal Evaluation</h1>
+              <p>AI Diagnostic Engine: DenseNet-121 Ordinal Classifier (Version: densenet121_ordinal_v1)</p>
+            </div>
+            <div style="text-align: right;">
+              <p style="margin: 0; font-size: 11px; color: #64748B;">Date Issued</p>
+              <p style="margin: 2px 0 0; font-size: 12px; font-weight: 700; color: #0F172A;">${reportDate}</p>
+            </div>
+          </div>
+
+          <div class="patient-card">
+            <div class="patient-col">
+              <div class="patient-field">
+                <div class="field-label">Patient Full Name</div>
+                <div class="field-value">${patientName}</div>
+              </div>
+              <div class="patient-field">
+                <div class="field-label">Medical Record / Patient ID</div>
+                <div class="field-value">${patientId}</div>
+              </div>
+            </div>
+            <div class="patient-col">
+              <div class="patient-field">
+                <div class="field-label">Account Email</div>
+                <div class="field-value">${user?.email || 'N/A'}</div>
+              </div>
+              <div class="patient-field">
+                <div class="field-label">Documented Screenings</div>
+                <div class="field-value">${scans.length} Examination(s) Recorded</div>
+              </div>
+            </div>
+          </div>
+
+          <h3 style="font-size: 14px; color: #0F172A; margin: 0 0 10px;">Screening Examination History</h3>
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 22%;">Date / Time</th>
+                <th style="width: 18%;">Eye</th>
+                <th style="width: 14%; text-align: center;">AI Grade</th>
+                <th style="width: 28%;">Diagnostic Classification</th>
+                <th style="width: 18%;">Clinical Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+          </table>
+
+          <div class="guidance-box">
+            <div class="guidance-title">Clinical Scale Reference (ICDRS Guidelines)</div>
+            <div class="guidance-body">
+              <strong>Grade 0:</strong> No Retinopathy | <strong>Grade 1:</strong> Mild NPDR (Microaneurysms only) | <strong>Grade 2:</strong> Moderate NPDR (Microaneurysms + exudates/hemorrhages) | <strong>Grade 3:</strong> Severe NPDR (4-2-1 criteria) | <strong>Grade 4:</strong> Proliferative Diabetic Retinopathy (Neovascularization, vitreous hemorrhage).
+            </div>
+          </div>
+
+          <div class="signoff-box">
+            <div class="signoff-title">Attending Clinician / Ophthalmologist Second Opinion</div>
+            <p style="margin: 0 0 8px; font-size: 11px; color: #475569;">
+              I certify that I have inspected the retinal fundus imaging records compiled herein.
+            </p>
+            <div class="signoff-row">
+              <div class="signoff-col">
+                <div class="sig-line"></div>
+                <div class="sig-label">Clinician Signature / Seal</div>
+              </div>
+              <div class="signoff-col">
+                <div class="sig-line"></div>
+                <div class="sig-label">Date & Medical License Number</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="footer">
+            CONFIDENTIAL MEDICAL REPORT &bull; Generated by Diabetic Retinopathy Screening System &bull; Compliant with Clinical Health Record Standards
+          </div>
+        </body>
+        </html>
+      `;
+
+      // 1. Web: Directly trigger browser print dialog to avoid local file scheme restrictions
+      if (Platform.OS === 'web') {
+        await Print.printAsync({ html });
+        return;
+      }
+
+      // 2. Native mobile: Generate PDF file
+      const { uri } = await Print.printToFileAsync({ html });
+
+      // 3. Ensure file is in app's accessible cache directory so Android FilePermissionService permits reading
+      let shareUri = uri;
+      try {
+        if (FileSystem.cacheDirectory) {
+          const destinationUri = `${FileSystem.cacheDirectory}clinical_retinal_summary_${Date.now()}.pdf`;
+          await FileSystem.copyAsync({
+            from: uri,
+            to: destinationUri,
+          });
+          shareUri = destinationUri;
+        }
+      } catch (copyErr) {
+        console.warn('FileSystem copy notice:', copyErr);
+      }
+
+      // 4. Try native sharing, fallback gracefully to system Print/Save dialog if sharing is rejected
+      const isAvailable = await Sharing.isAvailableAsync();
+      if (isAvailable) {
+        try {
+          await Sharing.shareAsync(shareUri, {
+            UTI: 'com.adobe.pdf',
+            mimeType: 'application/pdf',
+            dialogTitle: 'Export Clinical Retinal Summary',
+          });
+        } catch (shareErr: any) {
+          console.warn('Sharing failed, falling back to Print:', shareErr);
+          // Native Print dialog allows user to "Save as PDF" directly
+          await Print.printAsync({ html });
+        }
+      } else {
+        await Print.printAsync({ html });
+      }
+    } catch (err: any) {
+      Alert.alert('PDF Export Notice', err.message || 'Could not compile clinical PDF summary.');
+    } finally {
+      setExportingPdf(false);
+    }
   };
 
   const handleViewScan = (scan: ScanItem) => {
@@ -135,12 +337,22 @@ export default function HistoryScreen() {
         </Text>
 
         <TouchableOpacity
-          style={[styles.exportBtn, { borderColor: theme.primary }]}
+          style={[
+            styles.exportBtn,
+            { borderColor: theme.primary },
+            exportingPdf && { opacity: 0.6 },
+          ]}
           onPress={handleExportPDF}
+          disabled={exportingPdf || loading}
+          accessibilityLabel="Export Clinical PDF Summary"
         >
-          <FileText size={18} color={theme.primary} />
+          {exportingPdf ? (
+            <ActivityIndicator size="small" color={theme.primary} />
+          ) : (
+            <FileText size={18} color={theme.primary} />
+          )}
           <Text style={[styles.exportBtnText, { color: theme.primary }]}>
-            Export Clinical PDF Summary
+            {exportingPdf ? 'Compiling Clinical PDF...' : 'Export Clinical PDF Summary'}
           </Text>
         </TouchableOpacity>
       </View>

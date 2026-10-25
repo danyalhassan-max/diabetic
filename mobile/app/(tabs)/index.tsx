@@ -36,6 +36,7 @@ export default function ScreeningScreen() {
   const [result, setResult] = useState<PredictionResult | null>(null);
 
   const pickImage = async (useCamera: boolean) => {
+    if (loading) return;
     try {
       const options: ImagePicker.ImagePickerOptions = {
         mediaTypes: ['images'],
@@ -281,8 +282,10 @@ export default function ScreeningScreen() {
               style={[
                 styles.toggleBtn,
                 selectedEye === 'OD' && { backgroundColor: theme.primary },
+                loading && { opacity: 0.6 },
               ]}
               onPress={() => setSelectedEye('OD')}
+              disabled={loading}
             >
               <Text style={[styles.toggleText, selectedEye === 'OD' && styles.toggleTextActive]}>
                 Right Eye (OD)
@@ -293,8 +296,10 @@ export default function ScreeningScreen() {
               style={[
                 styles.toggleBtn,
                 selectedEye === 'OS' && { backgroundColor: theme.primary },
+                loading && { opacity: 0.6 },
               ]}
               onPress={() => setSelectedEye('OS')}
+              disabled={loading}
             >
               <Text style={[styles.toggleText, selectedEye === 'OS' && styles.toggleTextActive]}>
                 Left Eye (OS)
@@ -307,7 +312,11 @@ export default function ScreeningScreen() {
         {imageUri ? (
           <View style={styles.previewContainer}>
             <Image source={{ uri: imageUri }} style={styles.fundusPreview} resizeMode="cover" />
-            <TouchableOpacity style={styles.changeImageBtn} onPress={() => pickImage(false)}>
+            <TouchableOpacity
+              style={[styles.changeImageBtn, loading && { opacity: 0.5 }]}
+              onPress={() => pickImage(false)}
+              disabled={loading}
+            >
               <RefreshCw size={16} color="#FFFFFF" />
               <Text style={styles.changeImageText}>Replace Image</Text>
             </TouchableOpacity>
@@ -327,19 +336,31 @@ export default function ScreeningScreen() {
         {/* Action Buttons */}
         <View style={styles.btnRow}>
           <TouchableOpacity
-            style={[styles.actionBtn, styles.secondaryBtn, { borderColor: theme.primary }]}
+            style={[
+              styles.actionBtn,
+              styles.secondaryBtn,
+              { borderColor: loading ? theme.border : theme.primary },
+              loading && { opacity: 0.5 },
+            ]}
             onPress={() => pickImage(false)}
+            disabled={loading}
           >
-            <ImageIcon size={18} color={theme.primary} />
-            <Text style={[styles.actionBtnText, { color: theme.primary }]}>Gallery</Text>
+            <ImageIcon size={18} color={loading ? theme.textMuted : theme.primary} />
+            <Text style={[styles.actionBtnText, { color: loading ? theme.textMuted : theme.primary }]}>Gallery</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.actionBtn, styles.secondaryBtn, { borderColor: theme.primary }]}
+            style={[
+              styles.actionBtn,
+              styles.secondaryBtn,
+              { borderColor: loading ? theme.border : theme.primary },
+              loading && { opacity: 0.5 },
+            ]}
             onPress={() => pickImage(true)}
+            disabled={loading}
           >
-            <Camera size={18} color={theme.primary} />
-            <Text style={[styles.actionBtnText, { color: theme.primary }]}>Camera</Text>
+            <Camera size={18} color={loading ? theme.textMuted : theme.primary} />
+            <Text style={[styles.actionBtnText, { color: loading ? theme.textMuted : theme.primary }]}>Camera</Text>
           </TouchableOpacity>
         </View>
 
